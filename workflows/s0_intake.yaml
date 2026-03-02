@@ -1,0 +1,73 @@
+# Step 0: Project Intake Workflow
+# 项目启动阶段工作流
+
+workflow_id: s0_intake
+workflow_name: Project Intake Workflow
+version: "1.0"
+initial_state: start
+
+states:
+  start:
+    type: start
+    description: Workflow initialization
+    actions:
+      - initialize_project
+    transitions:
+      - to: step_0_1
+
+  step_0_1:
+    type: task
+    description: Generate Project Intake Card
+    actions:
+      - execute_step_0_1
+      - validate_intake_card
+    transitions:
+      - to: step_0_2
+        condition: intake_card_valid
+
+  step_0_2:
+    type: task
+    description: Generate Venue Taste Notes
+    actions:
+      - execute_step_0_2
+      - validate_venue_taste
+    transitions:
+      - to: gate_0_check
+        condition: venue_taste_valid
+
+  gate_0_check:
+    type: decision
+    description: Gate 0 - Project Intake Ready
+    actions:
+      - check_gate_0
+    transitions:
+      - to: completed
+        condition: gate_0_pass
+      - to: step_0_1
+        condition: gate_0_fail_intake
+      - to: step_0_2
+        condition: gate_0_fail_venue
+
+  completed:
+    type: end
+    description: Step 0 completed successfully
+    actions:
+      - finalize_step_0
+    transitions: []
+
+metadata:
+  author: v6.0 Upgrade Team
+  created_at: "2026-02-04"
+  description: |
+    Step 0 workflow handles project intake and venue analysis.
+    Includes Gate 0 validation before proceeding to Step 1.
+
+  gate_requirements:
+    gate_0:
+      - Project Intake Card complete
+      - Venue description and constraints defined
+      - Definition of Done (DoD) specified
+
+  artifacts_produced:
+    - PROJECT_INTAKE_CARD
+    - VENUE_TASTE_NOTES

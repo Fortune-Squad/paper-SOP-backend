@@ -1,0 +1,184 @@
+# Step 1: Deep Research & Topic Freeze Workflow
+# 深度研究与主题冻结工作流
+
+workflow_id: s1_research
+workflow_name: Deep Research & Topic Freeze Workflow
+version: "1.0"
+initial_state: start
+
+states:
+  start:
+    type: start
+    description: Begin deep research phase
+    actions:
+      - initialize_research
+    transitions:
+      - to: step_1_1
+
+  step_1_1:
+    type: task
+    description: Deep Research Summary
+    actions:
+      - execute_step_1_1
+      - validate_research_summary
+    transitions:
+      - to: step_1_1b
+        condition: research_summary_valid
+
+  step_1_1b:
+    type: task
+    description: Reference QA Check
+    actions:
+      - execute_step_1_1b
+      - validate_references
+    transitions:
+      - to: gate_1_6_check
+
+  gate_1_6_check:
+    type: decision
+    description: Gate 1.6 - Reference Quality Check
+    actions:
+      - check_gate_1_6
+    transitions:
+      - to: step_1_2
+        condition: gate_1_6_pass
+      - to: step_1_1b
+        condition: gate_1_6_fail
+
+  step_1_2:
+    type: task
+    description: Topic Selection
+    actions:
+      - execute_step_1_2
+      - validate_topic_selection
+    transitions:
+      - to: step_1_2b
+        condition: topic_selected
+
+  step_1_2b:
+    type: task
+    description: Topic Alignment Check
+    actions:
+      - execute_step_1_2b
+      - validate_topic_alignment
+    transitions:
+      - to: gate_1_25_check
+
+  gate_1_25_check:
+    type: decision
+    description: Gate 1.25 - Topic Alignment Check
+    actions:
+      - check_gate_1_25
+    transitions:
+      - to: step_1_3
+        condition: gate_1_25_pass
+      - to: step_1_2
+        condition: gate_1_25_fail
+
+  step_1_3:
+    type: task
+    description: Killer Prior Check
+    actions:
+      - execute_step_1_3
+      - validate_killer_prior
+    transitions:
+      - to: gate_1_5_check
+
+  gate_1_5_check:
+    type: decision
+    description: Gate 1.5 - Killer Prior Check (MANDATORY)
+    actions:
+      - check_gate_1_5
+    transitions:
+      - to: step_1_4
+        condition: gate_1_5_pass
+      - to: pivot_decision
+        condition: gate_1_5_fail
+
+  pivot_decision:
+    type: decision
+    description: Decide whether to pivot or stop
+    actions:
+      - evaluate_pivot_options
+    transitions:
+      - to: step_1_2
+        condition: pivot_to_new_topic
+      - to: failed
+        condition: stop_project
+
+  step_1_4:
+    type: task
+    description: Claims and Non-Claims
+    actions:
+      - execute_step_1_4
+      - validate_claims
+    transitions:
+      - to: step_1_5
+
+  step_1_5:
+    type: task
+    description: Figure-First Story
+    actions:
+      - execute_step_1_5
+      - validate_story
+    transitions:
+      - to: gate_1_check
+
+  gate_1_check:
+    type: decision
+    description: Gate 1 - Topic Freeze
+    actions:
+      - check_gate_1
+    transitions:
+      - to: completed
+        condition: gate_1_pass
+      - to: step_1_4
+        condition: gate_1_fail
+
+  completed:
+    type: end
+    description: Step 1 completed - Topic frozen
+    actions:
+      - finalize_step_1
+    transitions: []
+
+  failed:
+    type: end
+    description: Project stopped due to killer prior
+    actions:
+      - archive_project
+    transitions: []
+
+metadata:
+  author: v6.0 Upgrade Team
+  created_at: "2026-02-04"
+  description: |
+    Step 1 workflow handles deep research, topic selection, and topic freeze.
+    Includes mandatory Gate 1.5 (Killer Prior Check) that must PASS to proceed.
+
+  gate_requirements:
+    gate_1_6:
+      - Reference quality validated
+      - DOI accessibility checked
+      - Literature completeness verified
+    gate_1_25:
+      - Topic aligns with venue taste
+      - Topic satisfies constraints
+      - Topic has clear novelty
+    gate_1_5:
+      - No killer prior exists (MANDATORY)
+      - Topic is sufficiently novel
+      - Differentiation is clear
+    gate_1:
+      - Topic selected and frozen
+      - Claims defined
+      - Story structure complete
+
+  artifacts_produced:
+    - DEEP_RESEARCH_SUMMARY
+    - REFERENCE_QA_REPORT
+    - SELECTED_TOPIC
+    - TOPIC_ALIGNMENT_CHECK
+    - KILLER_PRIOR_CHECK
+    - CLAIMS_AND_NONCLAIMS
+    - FIGURE_FIRST_STORY

@@ -1,0 +1,153 @@
+# Step 2: Blueprint & Engineering Workflow
+# 蓝图与工程规范工作流
+
+workflow_id: s2_plan
+workflow_name: Blueprint & Engineering Workflow
+version: "1.0"
+initial_state: start
+
+states:
+  start:
+    type: start
+    description: Begin plan freeze phase
+    actions:
+      - initialize_planning
+    transitions:
+      - to: step_2_0
+
+  step_2_0:
+    type: task
+    description: Figure/Table List
+    actions:
+      - execute_step_2_0
+      - validate_figure_list
+    transitions:
+      - to: step_2_1
+
+  step_2_1:
+    type: task
+    description: Full Proposal
+    actions:
+      - execute_step_2_1
+      - validate_proposal
+    transitions:
+      - to: step_2_2
+
+  step_2_2:
+    type: task
+    description: Data/Simulation Spec
+    actions:
+      - execute_step_2_2
+      - validate_data_spec
+    transitions:
+      - to: step_2_3
+
+  step_2_3:
+    type: task
+    description: Engineering Spec
+    actions:
+      - execute_step_2_3
+      - validate_engineering_spec
+    transitions:
+      - to: step_2_4
+
+  step_2_4:
+    type: task
+    description: Red Team Review
+    actions:
+      - execute_step_2_4
+      - validate_red_team_review
+    transitions:
+      - to: revision_decision
+
+  revision_decision:
+    type: decision
+    description: Decide if revisions are needed
+    actions:
+      - evaluate_red_team_feedback
+    transitions:
+      - to: step_2_4b
+        condition: revisions_needed
+      - to: step_2_5
+        condition: no_revisions_needed
+
+  step_2_4b:
+    type: task
+    description: Patch Propagation
+    actions:
+      - execute_step_2_4b
+      - apply_patches
+      - validate_patches
+    transitions:
+      - to: step_2_5
+
+  step_2_5:
+    type: task
+    description: Plan Freeze
+    actions:
+      - execute_step_2_5
+      - run_consistency_linter
+      - validate_plan_freeze
+    transitions:
+      - to: gate_2_check
+
+  gate_2_check:
+    type: decision
+    description: Gate 2 - Plan Freeze
+    actions:
+      - check_gate_2
+    transitions:
+      - to: completed
+        condition: gate_2_pass
+      - to: identify_issues
+        condition: gate_2_fail
+
+  identify_issues:
+    type: decision
+    description: Identify which component needs revision
+    actions:
+      - analyze_gate_2_failures
+    transitions:
+      - to: step_2_1
+        condition: proposal_issues
+      - to: step_2_2
+        condition: data_spec_issues
+      - to: step_2_3
+        condition: engineering_issues
+      - to: step_2_4
+        condition: red_team_issues
+
+  completed:
+    type: end
+    description: Step 2 completed - Plan frozen
+    actions:
+      - finalize_step_2
+      - generate_execution_order
+    transitions: []
+
+metadata:
+  author: v6.0 Upgrade Team
+  created_at: "2026-02-04"
+  description: |
+    Step 2 workflow handles proposal development, engineering specification,
+    red team review, and plan freeze. Includes consistency validation at Gate 2.
+
+  gate_requirements:
+    gate_2:
+      - Full proposal complete
+      - Data/simulation spec defined
+      - Engineering spec complete
+      - Red team review addressed
+      - Consistency linter passed
+      - All claims mapped to evidence
+      - All references validated
+
+  artifacts_produced:
+    - FIGURE_TABLE_LIST
+    - FULL_PROPOSAL
+    - DATA_OR_SIM_SPEC
+    - ENGINEERING_SPEC
+    - REDTEAM_REVIEWER2
+    - PATCH_DIFF
+    - RESEARCH_PLAN_FROZEN
+    - EXECUTION_ORDER

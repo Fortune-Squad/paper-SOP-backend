@@ -1,0 +1,14 @@
+.venv
+__pycache__
+*.pyc
+.env
+.env.*
+data/
+projects/
+vector_db/
+logs/
+config/
+*.db
+docs/openapi.json
+.idea
+*.log

@@ -1,0 +1,194 @@
+# Complete SOP Workflow (Step 0 → Step 1 → Step 2)
+# 完整 SOP 工作流
+
+workflow_id: sop_complete
+workflow_name: Complete SOP Workflow (v4.0 Agentic-First)
+version: "1.0"
+initial_state: start
+
+states:
+  start:
+    type: start
+    description: Initialize new research project
+    actions:
+      - create_project
+      - initialize_git_repo
+      - setup_vector_store
+    transitions:
+      - to: step_0_intake
+
+  # ========== Step 0: Project Intake ==========
+  step_0_intake:
+    type: workflow
+    description: Execute Step 0 workflow
+    actions:
+      - run_workflow_s0_intake
+    transitions:
+      - to: gate_0_check
+
+  gate_0_check:
+    type: decision
+    description: Gate 0 - Project Intake Ready
+    actions:
+      - check_gate_0
+    transitions:
+      - to: step_1_research
+        condition: gate_0_pass
+      - to: step_0_intake
+        condition: gate_0_fail
+
+  # ========== Step 1: Deep Research ==========
+  step_1_research:
+    type: workflow
+    description: Execute Step 1 workflow
+    actions:
+      - run_workflow_s1_research
+    transitions:
+      - to: gate_1_check
+
+  gate_1_check:
+    type: decision
+    description: Gate 1 - Topic Freeze
+    actions:
+      - check_gate_1
+    transitions:
+      - to: gate_1_5_mandatory_check
+        condition: gate_1_pass
+      - to: step_1_research
+        condition: gate_1_fail
+
+  gate_1_5_mandatory_check:
+    type: decision
+    description: Gate 1.5 - Killer Prior Check (MANDATORY)
+    actions:
+      - check_gate_1_5
+    transitions:
+      - to: step_2_plan
+        condition: gate_1_5_pass
+      - to: project_pivot_or_stop
+        condition: gate_1_5_fail
+
+  project_pivot_or_stop:
+    type: decision
+    description: Critical decision point - pivot or stop
+    actions:
+      - evaluate_pivot_feasibility
+      - consult_human_decision
+    transitions:
+      - to: step_1_research
+        condition: pivot_approved
+      - to: project_stopped
+        condition: stop_approved
+
+  # ========== Step 2: Plan Freeze ==========
+  step_2_plan:
+    type: workflow
+    description: Execute Step 2 workflow
+    actions:
+      - run_workflow_s2_plan
+    transitions:
+      - to: gate_2_check
+
+  gate_2_check:
+    type: decision
+    description: Gate 2 - Plan Freeze
+    actions:
+      - check_gate_2
+      - run_consistency_linter
+    transitions:
+      - to: plan_frozen
+        condition: gate_2_pass
+      - to: step_2_plan
+        condition: gate_2_fail
+
+  # ========== Terminal States ==========
+  plan_frozen:
+    type: end
+    description: Research plan frozen - ready for execution
+    actions:
+      - finalize_plan
+      - generate_execution_order
+      - create_stop_pivot_checkpoints
+      - notify_completion
+    transitions: []
+
+  project_stopped:
+    type: end
+    description: Project stopped due to killer prior
+    actions:
+      - archive_project
+      - document_stop_reason
+      - notify_stakeholders
+    transitions: []
+
+metadata:
+  author: v6.0 Upgrade Team
+  created_at: "2026-02-04"
+  version: "4.0"
+  description: |
+    Complete SOP workflow implementing v4.0 Agentic-First methodology.
+    Covers project intake through plan freeze with mandatory gate checks.
+
+  workflow_phases:
+    - name: Step 0
+      description: Project Intake & Venue Analysis
+      gates: [gate_0]
+    - name: Step 1
+      description: Deep Research & Topic Freeze
+      gates: [gate_1_6, gate_1_25, gate_1_5, gate_1]
+    - name: Step 2
+      description: Blueprint & Engineering
+      gates: [gate_2]
+
+  critical_gates:
+    gate_1_5:
+      name: Killer Prior Check
+      mandatory: true
+      description: |
+        MANDATORY gate that must PASS before proceeding to Step 2.
+        If FAIL, project must pivot to new topic or stop.
+
+  ai_model_usage:
+    chatgpt:
+      role: PI/Architect
+      tasks:
+        - Formalization
+        - Risk control
+        - Gate checking
+        - Engineering decomposition
+    gemini:
+      role: Intelligence Officer/Editor
+      tasks:
+        - Deep research
+        - Venue taste analysis
+        - Red team critique
+      wrapper_mode: agentic
+
+  artifacts_produced:
+    step_0:
+      - PROJECT_INTAKE_CARD
+      - VENUE_TASTE_NOTES
+    step_1:
+      - DEEP_RESEARCH_SUMMARY
+      - REFERENCE_QA_REPORT
+      - SELECTED_TOPIC
+      - TOPIC_ALIGNMENT_CHECK
+      - KILLER_PRIOR_CHECK
+      - CLAIMS_AND_NONCLAIMS
+      - FIGURE_FIRST_STORY
+    step_2:
+      - FIGURE_TABLE_LIST
+      - FULL_PROPOSAL
+      - DATA_OR_SIM_SPEC
+      - ENGINEERING_SPEC
+      - REDTEAM_REVIEWER2
+      - PATCH_DIFF
+      - RESEARCH_PLAN_FROZEN
+      - EXECUTION_ORDER
+
+  quality_assurance:
+    - Reference QA validation (Gate 1.6)
+    - Topic alignment check (Gate 1.25)
+    - Killer prior check (Gate 1.5 - MANDATORY)
+    - Consistency linting (Gate 2)
+    - Cross-document validation
