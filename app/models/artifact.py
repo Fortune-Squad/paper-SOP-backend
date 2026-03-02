@@ -73,15 +73,23 @@ class Artifact(BaseModel):
     def from_markdown(cls, file_path: str, content: str, artifact_id: str) -> "Artifact":
         """从 Markdown 文件内容解析（包含 YAML front-matter）"""
         import yaml
-        import re
 
-        # 解析 YAML front-matter
-        match = re.match(r'^---\n(.*?)\n---\n\n(.*)$', content, re.DOTALL)
-        if not match:
+        # 使用 split 方式解析，与 Document.from_markdown 保持一致
+        # 处理双 front-matter（系统生成 + AI 生成）的情况
+        parts = content.split("---", 2)
+        if len(parts) < 3:
             raise ValueError("Invalid artifact format: missing YAML front-matter")
 
-        yaml_str, markdown_content = match.groups()
+        yaml_str = parts[1].strip()
+        markdown_content = parts[2].strip()
+
         metadata_dict = yaml.safe_load(yaml_str)
+
+        # Normalize status: AI-generated YAML may contain values like "completed"
+        # that are not in ArtifactStatus enum (draft/frozen only)
+        raw_status = str(metadata_dict.get('status', 'draft')).lower()
+        if raw_status not in ('draft', 'frozen'):
+            metadata_dict['status'] = 'frozen' if raw_status in ('completed', 'final', 'approved') else 'draft'
 
         # 转换字符串为 datetime
         if isinstance(metadata_dict.get('created_at'), str):

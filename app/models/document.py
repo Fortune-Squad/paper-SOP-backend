@@ -14,6 +14,7 @@ class DocumentStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     FAILED = "failed"
+    FROZEN = "frozen"  # v7.0 NEW - 用于 Plan Freeze 后的文档
 
 
 class GateStatus(str, Enum):
@@ -41,6 +42,11 @@ class DocumentType(str, Enum):
     REFERENCE_QA_REPORT = "00_Reference_QA_Report"  # NEW v4.0
     VERIFIED_REFERENCES = "00_Verified_References"  # NEW v4.0 (.bib file)
 
+    # v7.0 NEW - Deep Research 拆分为 3 个子步骤
+    SEARCH_PLAN = "01_A_Search_Plan"
+    RAW_INTEL_LOG = "01_B_Raw_Intel_Log"
+    LITERATURE_MATRIX_V7 = "01_C_Literature_Matrix"
+
     SELECTED_TOPIC = "01_Selected_Topic"
     DRAFT_CLAIMS = "01_Draft_Claims"
     TOPIC_ALIGNMENT_CHECK = "01_Topic_Alignment_Check"  # NEW v4.0 (Gate 1.25)
@@ -62,6 +68,32 @@ class DocumentType(str, Enum):
     RESEARCH_PLAN_FROZEN = "04_Research_Plan_FROZEN"
     EXECUTION_ORDER = "04_Execution_Order"  # NEW v4.0
     STOP_OR_PIVOT_CHECKPOINTS = "04_Stop_or_Pivot_Checkpoints"  # NEW v4.0
+
+    # Step 3 - Research Execution (NEW Step 3-4)
+    WP_REGISTRY = "05_WP_Registry"
+    EXECUTION_STATE = "05_Execution_State"
+
+    # Step 4 - Convergence & Delivery (NEW Step 3-4)
+    DELIVERY_MANIFEST = "06_Delivery_Manifest"
+    CITATION_REPORT = "06_Citation_Report"
+    REPRO_CHECK = "06_Repro_Check"
+    ASSEMBLY_KIT_OUTLINE = "06_Assembly_Kit_Outline"
+
+    # v7.1 NEW
+    TERM_CONCEPT_QA = "02_Term_Concept_QA"
+    IDEA_LAB_CANDIDATES = "01_D_Idea_Lab_Candidates"
+
+    # v1.2 §4 NEW
+    PAPER_DRAFT = "06_Paper_Draft"
+
+    # v1.2 §5.4 NEW
+    READINESS_ASSESSMENT = "05_Readiness_Assessment"
+    SESSION_LOG = "05_Session_Log"
+    TASK_PLAN = "05_Task_Plan"
+    AGENTS_MD = "00_Agents_MD"
+    MEMORY_MD = "00_Memory_MD"
+    BOUNDARY_LOG = "05_Boundary_Log"
+    FROZEN_MANIFEST = "05_Frozen_Manifest"
 
 
 class DocumentMetadata(BaseModel):

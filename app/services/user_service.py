@@ -3,6 +3,7 @@ User service for CRUD operations on users.
 """
 from sqlalchemy.orm import Session
 from typing import Optional, List
+from datetime import datetime
 from app.db.models import User as DBUser
 from app.models.user import UserCreate, UserUpdate
 from app.utils.security import get_password_hash, verify_password
@@ -237,7 +238,7 @@ class UserService:
         return db_user
 
     @staticmethod
-    def count_users(db: Session, role: Optional[str] = None, is_active: Optional[bool] = None) -> int:
+    def count_users(db: Session, role: Optional[str] = None, is_active: Optional[bool] = None, created_after: Optional[datetime] = None) -> int:
         """
         Count users with optional filters.
 
@@ -245,6 +246,7 @@ class UserService:
             db: Database session
             role: Filter by role
             is_active: Filter by activation status
+            created_after: Filter by creation date (users created after this datetime)
 
         Returns:
             Number of users matching filters
@@ -255,5 +257,7 @@ class UserService:
             query = query.filter(DBUser.role == role)
         if is_active is not None:
             query = query.filter(DBUser.is_active == is_active)
+        if created_after:
+            query = query.filter(DBUser.created_at >= created_after)
 
         return query.count()

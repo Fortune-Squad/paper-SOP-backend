@@ -6,7 +6,6 @@ python-dotenv==1.0.0
 openai==1.10.0
 google-generativeai==0.3.2
 chromadb==0.4.22
-numpy>=1.22.5,<2  # chromadb 0.4.x 与 NumPy 2.x 不兼容（np.float_ 等已移除）
 gitpython==3.1.41
 pyyaml==6.0.1
 aiofiles==23.2.1
@@ -19,14 +18,14 @@ requests==2.31.0
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.23.0
 tiktoken==0.5.2
+portalocker==2.8.2
 
-# Authentication & Database
+# Authentication dependencies
 sqlalchemy==2.0.25
-psycopg2-binary==2.9.9
 alembic==1.13.1
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-bcrypt>=4.0.1  # chromadb 强制要求；与 passlib 1.7.4 同用会在登录时出现 (trapped) 版本读取警告，可忽略
+bcrypt==4.1.2  # Pin to 4.x for passlib compatibility
 email-validator==2.1.0
 
 # Testing dependencies

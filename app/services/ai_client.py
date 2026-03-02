@@ -1,6 +1,11 @@
 """
 AI 客户端封装（增强版）
 统一封装 OpenAI API 和 Gemini API，支持重试机制、向量数据库集成和详细日志记录
+
+合规红线 (Compliance Red Lines) — SOP v7 §12
+  1. 不做学术不端/代写代交付 — 不交付可直接投稿的论文正文/作业答案
+  2. 不绕过限额/不轮询多 Key — 扩量只走申请更高额度/企业合同
+  3. 不把闭源模型输出作为可售训练集 — 闭源模型最多用于内部 QA/打分
 """
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
@@ -10,6 +15,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import logging
 
 from openai import AsyncOpenAI, OpenAIError
+import httpx
 import google.generativeai as genai
 
 from app.config import settings
@@ -71,6 +77,28 @@ class AIClient(ABC):
         """
         pass
 
+    @abstractmethod
+    async def generate(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        attachments: Optional[List[Dict[str, str]]] = None,
+        response_format: str = "text"
+    ) -> Dict[str, Any]:
+        """
+        标准 generate 接口（v1.2 DevSpec §13.1）
+
+        Args:
+            prompt: 用户提示词
+            system: 系统提示词（可选）
+            attachments: 附件列表 [{"path": str, "mime": str}]（可选）
+            response_format: 响应格式 "text" | "json"
+
+        Returns:
+            Dict: {"text": str, "usage": TokenUsage, "raw": Any}
+        """
+        pass
+
     async def get_context_from_vector_store(self, project_id: str, query: str,
                                            top_k: int = 3) -> List[str]:
         """
@@ -114,6 +142,13 @@ class ChatGPTClient(AIClient):
 
     def __init__(self, vector_store=None):
         super().__init__(vector_store)
+        self.model = settings.openai_model
+        self.max_tokens = settings.openai_max_tokens
+        self.temperature = settings.openai_temperature
+
+        # gpt-5-codex 系列使用 /v1/responses 端点（非 chat/completions）
+        self.use_responses_api = "codex" in self.model.lower()
+
         # 支持自定义 Base URL（用于 API 代理服务如 TokHub）
         if settings.openai_api_base:
             self.client = AsyncOpenAI(
@@ -121,29 +156,88 @@ class ChatGPTClient(AIClient):
                 base_url=settings.openai_api_base,
                 timeout=settings.api_timeout
             )
+            self._api_base = settings.openai_api_base.rstrip("/")
             logger.info(f"Using custom OpenAI base URL: {settings.openai_api_base}")
         else:
             self.client = AsyncOpenAI(
                 api_key=settings.openai_api_key,
                 timeout=settings.api_timeout
             )
+            self._api_base = "https://api.openai.com/v1"
             logger.info("Using default OpenAI base URL")
 
-        self.model = settings.openai_model
-        self.max_tokens = settings.openai_max_tokens
-        self.temperature = settings.openai_temperature
+        self._api_key = settings.openai_api_key
         logger.info(f"API timeout set to {settings.api_timeout} seconds")
         logger.info(f"Max retries set to {settings.max_retries}")
+        if self.use_responses_api:
+            logger.info(f"Model {self.model} will use /v1/responses endpoint")
+
+    async def _call_responses_api(self, messages: List[Dict[str, str]],
+                                   system_prompt: Optional[str] = None,
+                                   max_tokens: Optional[int] = None) -> Dict[str, Any]:
+        """调用 /v1/responses 端点（gpt-5-codex 系列专用）"""
+        # 构建 input：将 messages 中的 user/assistant 消息作为 input
+        input_messages = [m for m in messages if m["role"] != "system"]
+        instructions = system_prompt
+        if not instructions:
+            # 从 messages 中提取 system prompt
+            sys_msgs = [m for m in messages if m["role"] == "system"]
+            if sys_msgs:
+                instructions = sys_msgs[0]["content"]
+
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "input": input_messages,
+        }
+        if instructions:
+            payload["instructions"] = instructions
+        if max_tokens:
+            payload["max_output_tokens"] = max_tokens
+
+        url = f"{self._api_base}/responses"
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+
+        async with httpx.AsyncClient(timeout=settings.api_timeout) as http:
+            resp = await http.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+
+        # 从 output 中提取文本
+        text_parts = []
+        for item in data.get("output", []):
+            if item.get("type") == "message":
+                for block in item.get("content", []):
+                    if block.get("type") == "output_text":
+                        text_parts.append(block["text"])
+
+        content = "\n".join(text_parts) if text_parts else ""
+
+        # 提取 token usage
+        usage = None
+        raw_usage = data.get("usage")
+        if raw_usage:
+            usage = {
+                "prompt_tokens": raw_usage.get("input_tokens", 0),
+                "completion_tokens": raw_usage.get("output_tokens", 0),
+                "total_tokens": raw_usage.get("total_tokens",
+                    raw_usage.get("input_tokens", 0) + raw_usage.get("output_tokens", 0)),
+            }
+
+        return {"content": content, "usage": usage}
 
     @retry(
         stop=stop_after_attempt(settings.max_retries),
         wait=wait_exponential(multiplier=1, min=settings.retry_delay, max=60),
-        retry=retry_if_exception_type(OpenAIError),
+        retry=retry_if_exception_type((OpenAIError, httpx.HTTPStatusError)),
         before_sleep=log_retry_attempt,
         reraise=True
     )
     async def chat(self, prompt: str, context: Optional[List[str]] = None,
-                   system_prompt: Optional[str] = None) -> str:
+                   system_prompt: Optional[str] = None,
+                   max_tokens: Optional[int] = None) -> str:
         """
         发送聊天请求到 ChatGPT
 
@@ -151,6 +245,7 @@ class ChatGPTClient(AIClient):
             prompt: 用户提示词
             context: 上下文文档列表
             system_prompt: 系统提示词
+            max_tokens: 最大输出 token 数（可选，覆盖默认值）
 
         Returns:
             str: ChatGPT 响应内容
@@ -164,15 +259,12 @@ class ChatGPTClient(AIClient):
             messages = []
 
             # 添加系统提示词
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            else:
-                messages.append({
-                    "role": "system",
-                    "content": "You are a PI (Principal Investigator) and research architect. "
-                               "Your role is formalization, assumptions, math/stat definitions, "
-                               "risk control, gates, and engineering decomposition."
-                })
+            sys_content = system_prompt or (
+                "You are a PI (Principal Investigator) and research architect. "
+                "Your role is formalization, assumptions, math/stat definitions, "
+                "risk control, gates, and engineering decomposition."
+            )
+            messages.append({"role": "system", "content": sys_content})
 
             # 添加上下文
             if context:
@@ -187,24 +279,33 @@ class ChatGPTClient(AIClient):
 
             logger.info(f"📤 Sending request to ChatGPT (model: {self.model})")
 
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature
-            )
+            if self.use_responses_api:
+                # gpt-5-codex 系列：使用 /v1/responses 端点
+                result = await self._call_responses_api(
+                    messages, system_prompt=sys_content,
+                    max_tokens=max_tokens or self.max_tokens,
+                )
+                content = result["content"]
+                usage = result.get("usage")
+            else:
+                # 标准 chat/completions 端点
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=max_tokens or self.max_tokens,
+                    temperature=self.temperature
+                )
+                content = response.choices[0].message.content
+                usage = None
+                if hasattr(response, 'usage') and response.usage:
+                    usage = {
+                        "prompt_tokens": response.usage.prompt_tokens,
+                        "completion_tokens": response.usage.completion_tokens,
+                        "total_tokens": response.usage.total_tokens
+                    }
 
-            content = response.choices[0].message.content
             logger.info(f"📥 Received response from ChatGPT ({len(content)} characters)")
-
-            # 提取 token 使用信息
-            usage = None
-            if hasattr(response, 'usage') and response.usage:
-                usage = {
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "completion_tokens": response.usage.completion_tokens,
-                    "total_tokens": response.usage.total_tokens
-                }
+            if usage:
                 logger.info(
                     f"💰 Token usage: {usage['total_tokens']} total "
                     f"({usage['prompt_tokens']} prompt + {usage['completion_tokens']} completion)"
@@ -226,6 +327,11 @@ class ChatGPTClient(AIClient):
             else:
                 logger.error(f"❌ ChatGPT API error: {e}")
             raise AIClientError(f"ChatGPT API error: {str(e)}")
+        except httpx.HTTPStatusError as e:
+            error = e
+            status = "error"
+            logger.error(f"❌ ChatGPT Responses API error: {e.response.status_code} {e.response.text[:500]}")
+            raise AIClientError(f"ChatGPT Responses API error: {e.response.status_code}")
         except Exception as e:
             error = e
             status = "error"
@@ -346,21 +452,34 @@ class ChatGPTClient(AIClient):
         finally:
             duration = time.time() - start_time
 
-            # 记录详细日志
-            api_logger.log_api_call(
-                provider="openai",
-                model=self.model,
-                request_data={
-                    "prompt": prompt,
-                    "context": context or [],
-                    "system_prompt": system_prompt
-                },
-                response_data=response_data,
-                error=error,
-                duration=duration,
-                retry_count=0,
-                status=status
-            )
+
+    async def generate(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        attachments: Optional[List[Dict[str, str]]] = None,
+        response_format: str = "text"
+    ) -> Dict[str, Any]:
+        """
+        标准 generate 接口（v1.2 DevSpec §13.1）
+        
+        Args:
+            prompt: 用户提示词
+            system: 系统提示词（可选）
+            attachments: 附件列表（暂不支持）
+            response_format: 响应格式 "text" | "json"
+            
+        Returns:
+            Dict: {"text": str, "usage": TokenUsage, "raw": Any}
+        """
+        # Delegate to chat() method
+        text = await self.chat(prompt=prompt, system_prompt=system)
+        return {
+            "text": text,
+            "usage": None,  # TODO: Extract from response
+            "raw": None
+        }
+
 
 
 class GeminiClient(AIClient):
@@ -756,6 +875,169 @@ class GeminiClient(AIClient):
         }
 
 
+
+    async def generate(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        attachments: Optional[List[Dict[str, str]]] = None,
+        response_format: str = "text"
+    ) -> Dict[str, Any]:
+        """
+        标准 generate 接口（v1.2 DevSpec §13.1）
+        
+        Args:
+            prompt: 用户提示词
+            system: 系统提示词（可选）
+            attachments: 附件列表（暂不支持）
+            response_format: 响应格式 "text" | "json"
+            
+        Returns:
+            Dict: {"text": str, "usage": TokenUsage, "raw": Any}
+        """
+        # Delegate to chat() method
+        text = await self.chat(prompt=prompt, system_prompt=system)
+        return {
+            "text": text,
+            "usage": None,  # TODO: Extract from response
+            "raw": None
+        }
+
+class ClaudeClient(AIClient):
+    """
+    Claude AI Client (v7.1 S2-2)
+    Executor 角色 — code generation, subtask execution
+    Uses Anthropic API (/v1/messages)
+    """
+
+    def __init__(self, vector_store=None):
+        super().__init__(vector_store)
+        api_key = getattr(settings, 'claude_api_key', '') or ''
+        base_url = getattr(settings, 'claude_api_base', '') or None
+        self.model = getattr(settings, 'claude_model', 'claude-sonnet-4-20250514')
+
+        if not api_key:
+            logger.warning("Claude API key not configured, ClaudeClient will not function")
+            self.client = None
+            return
+
+        # Use OpenAI-compatible interface if base_url is set (proxy), else use Anthropic SDK
+        if base_url:
+            self.client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                timeout=settings.api_timeout,
+            )
+            self._use_openai_compat = True
+            logger.info(f"ClaudeClient using OpenAI-compatible proxy: {base_url}")
+        else:
+            try:
+                from anthropic import AsyncAnthropic
+                self.client = AsyncAnthropic(api_key=api_key, timeout=settings.api_timeout)
+                self._use_openai_compat = False
+                logger.info("ClaudeClient using native Anthropic SDK")
+            except ImportError:
+                # Fallback: use OpenAI-compatible interface with Anthropic's endpoint
+                self.client = AsyncOpenAI(
+                    api_key=api_key,
+                    base_url="https://api.anthropic.com/v1",
+                    timeout=settings.api_timeout,
+                )
+                self._use_openai_compat = True
+                logger.info("ClaudeClient using OpenAI-compat fallback (anthropic SDK not installed)")
+
+    async def chat(self, prompt: str, context: Optional[List[str]] = None,
+                   system_prompt: Optional[str] = None) -> str:
+        if not self.client:
+            raise AIClientError("Claude API key not configured")
+
+        messages = []
+        if context:
+            context_text = "\n\n---\n\n".join(context)
+            prompt = f"## Context\n{context_text}\n\n## Task\n{prompt}"
+
+        start_time = time.time()
+        error = None
+        response_text = ""
+
+        try:
+            if self._use_openai_compat:
+                msgs = []
+                if system_prompt:
+                    msgs.append({"role": "system", "content": system_prompt})
+                msgs.append({"role": "user", "content": prompt})
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=msgs,
+                    max_tokens=settings.openai_max_tokens,
+                    temperature=settings.openai_temperature,
+                )
+                response_text = response.choices[0].message.content
+            else:
+                # Native Anthropic SDK
+                kwargs = {
+                    "model": self.model,
+                    "max_tokens": settings.openai_max_tokens,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+                if system_prompt:
+                    kwargs["system"] = system_prompt
+                response = await self.client.messages.create(**kwargs)
+                response_text = response.content[0].text
+
+            return response_text
+
+        except Exception as e:
+            error = e
+            logger.error(f"Claude API error: {e}")
+            raise AIClientError(f"Claude API error: {str(e)}")
+        finally:
+            duration = time.time() - start_time
+            api_logger.log_api_call(
+                provider="claude",
+                model=self.model,
+                request_data={"prompt": prompt[:200], "system_prompt": system_prompt},
+                response_data={"content": response_text[:200]} if response_text else None,
+                error=error,
+                duration=duration,
+                retry_count=0,
+                status="success" if not error else "error",
+            )
+
+
+    async def generate(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        attachments: Optional[List[Dict[str, str]]] = None,
+        response_format: str = "text"
+    ) -> Dict[str, Any]:
+        """
+        标准 generate 接口（v1.2 DevSpec §13.1）
+        
+        Args:
+            prompt: 用户提示词
+            system: 系统提示词（可选）
+            attachments: 附件列表（暂不支持）
+            response_format: 响应格式 "text" | "json"
+            
+        Returns:
+            Dict: {"text": str, "usage": TokenUsage, "raw": Any}
+        """
+        # Delegate to chat() method
+        text = await self.chat(prompt=prompt, system_prompt=system)
+        return {
+            "text": text,
+            "usage": None,  # TODO: Extract from response
+            "raw": None
+        }
+
+    async def chat_with_thinking(self, prompt: str, context: Optional[List[str]] = None,
+                                 system_prompt: Optional[str] = None) -> Dict[str, Any]:
+        content = await self.chat(prompt, context, system_prompt)
+        return {"content": content, "thinking": None, "model": self.model}
+
+
 # 工厂函数
 def create_chatgpt_client(vector_store=None) -> ChatGPTClient:
     """创建 ChatGPT 客户端"""
@@ -765,3 +1047,8 @@ def create_chatgpt_client(vector_store=None) -> ChatGPTClient:
 def create_gemini_client(vector_store=None) -> GeminiClient:
     """创建 Gemini 客户端"""
     return GeminiClient(vector_store=vector_store)
+
+
+def create_claude_client(vector_store=None) -> ClaudeClient:
+    """创建 Claude 客户端 (v7.1)"""
+    return ClaudeClient(vector_store=vector_store)

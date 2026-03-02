@@ -38,6 +38,8 @@ def setup_database():
     from app.db.refresh_token_models import RefreshToken
     from app.db.password_reset_models import PasswordResetToken
 
+    # Re-apply override in case another test module changed it
+    app.dependency_overrides[get_db] = override_get_db
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)

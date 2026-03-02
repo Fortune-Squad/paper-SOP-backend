@@ -16,11 +16,18 @@
 | 文档 | `GET /api/projects/{id}/documents`, `GET .../documents/{type}` | 项目文档列表与内容 |
 | HIL | `GET/POST /api/hil/...` | 人机在环相关 |
 | WebSocket | `WS /ws/projects/{project_id}` | 项目实时状态推送 |
+| **v7 新增** | | |
+| 执行 | `GET/POST /api/projects/{id}/execution/...` | 执行控制、预检、快照 |
+| 交付 | `GET/POST /api/projects/{id}/delivery/...` | 交付进度、打包 |
+| Readiness | `GET/POST /api/projects/{id}/readiness/...` | 就绪评估 |
+| Memory | `GET/POST /api/memory/...` | 记忆存储 |
+| Session Logs | `GET /api/projects/{id}/session-logs/...` | 会话日志 |
+| 测试模式 | `GET/POST /api/test-mode` | 跳过前置/gate（仅 admin） |
 
 ## 健康与版本
 
 - `GET /health`、`GET /api/health`：健康检查
-- `GET /api/version`：版本与能力说明
+- `GET /api/version`：版本与能力说明（含 compliance_redlines）
 
 ## 错误响应
 

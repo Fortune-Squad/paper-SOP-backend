@@ -238,5 +238,13 @@ class PasswordResetService:
         # Mark token as used
         PasswordResetService.use_reset_token(db, token)
 
+        # Revoke all refresh tokens for this user (force re-login)
+        try:
+            from app.services.refresh_token_service import RefreshTokenService
+            RefreshTokenService.revoke_all_user_tokens(db, user.id)
+            logger.info(f"Revoked all refresh tokens for user {user.username} after password reset")
+        except Exception as e:
+            logger.warning(f"Failed to revoke refresh tokens after password reset: {e}")
+
         logger.info(f"Password reset successfully for user {user.username}")
         return True

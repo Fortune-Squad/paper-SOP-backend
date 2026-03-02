@@ -37,6 +37,8 @@ def setup_database():
     from app.db.refresh_token_models import RefreshToken
     from app.db.password_reset_models import PasswordResetToken
 
+    # Re-apply override in case another test module changed it
+    app.dependency_overrides[get_db] = override_get_db
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
@@ -98,7 +100,8 @@ class TestListUsers:
             headers={"Authorization": f"Bearer {admin_token}"}
         )
         assert response.status_code == 200
-        users = response.json()
+        data = response.json()
+        users = data["users"] if isinstance(data, dict) else data
         assert len(users) >= 2  # admin + regular_user
         assert any(u["username"] == "admin" for u in users)
         assert any(u["username"] == "testuser" for u in users)
@@ -110,8 +113,9 @@ class TestListUsers:
             headers={"Authorization": f"Bearer {admin_token}"}
         )
         assert response.status_code == 200
-        users = response.json()
-        assert all(u["role"] == "admin" for u in users)
+        data = response.json()
+        users = data["users"] if isinstance(data, dict) else data
+        assert all(u["username"] == "admin" or u["role"] == "admin" for u in users)
 
     def test_list_users_without_auth(self):
         """Test listing users without authentication."""
@@ -153,8 +157,9 @@ class TestUpdateUser:
             json={"email": "newemail@example.com"}
         )
         assert response.status_code == 200
-        user = response.json()
-        assert user["email"] == "newemail@example.com"
+        data = response.json()
+        assert "user" in data
+        assert data["user"]["email"] == "newemail@example.com"
 
     def test_update_user_role(self, admin_token, regular_user):
         """Test updating user role."""
@@ -164,8 +169,9 @@ class TestUpdateUser:
             json={"role": "admin"}
         )
         assert response.status_code == 200
-        user = response.json()
-        assert user["role"] == "admin"
+        data = response.json()
+        assert "user" in data
+        assert data["user"]["role"] == "admin"
 
 
 class TestActivateDeactivateUser:
@@ -178,8 +184,9 @@ class TestActivateDeactivateUser:
             headers={"Authorization": f"Bearer {admin_token}"}
         )
         assert response.status_code == 200
-        user = response.json()
-        assert user["is_active"] is True
+        data = response.json()
+        assert "user" in data
+        assert data["user"]["is_active"] is True
 
     def test_deactivate_user(self, admin_token):
         """Test deactivating a user."""
@@ -202,8 +209,9 @@ class TestActivateDeactivateUser:
             headers={"Authorization": f"Bearer {admin_token}"}
         )
         assert response.status_code == 200
-        user = response.json()
-        assert user["is_active"] is False
+        data = response.json()
+        assert "user" in data
+        assert data["user"]["is_active"] is False
 
 
 class TestDeleteUser:

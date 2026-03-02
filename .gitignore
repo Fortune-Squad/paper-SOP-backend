@@ -12,3 +12,4 @@ config/
 docs/openapi.json
 .idea
 *.log
+*_b64.txt

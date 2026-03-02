@@ -22,6 +22,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 
+def get_client_ip(request: Request) -> str:
+    """从请求中提取真实客户端 IP（支持反向代理）"""
+    # 优先使用 X-Forwarded-For（nginx/ngrok 设置）
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        # X-Forwarded-For 格式: client, proxy1, proxy2
+        return forwarded_for.split(",")[0].strip()
+    # 其次使用 X-Real-IP（nginx 设置）
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    # 最后使用 request.client
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     user_create: UserCreate,
@@ -86,7 +103,7 @@ async def login(
         HTTPException: 429 if too many failed attempts
     """
     # Get IP address and user agent
-    ip_address = request.client.host if request.client else "unknown"
+    ip_address = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "unknown")
 
     # Check if IP is blocked

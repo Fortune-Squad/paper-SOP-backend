@@ -1,6 +1,6 @@
 """
-Test Step 1.1b: Reference QA
-测试 Step 1.1b 生成 Reference QA Report
+Test Step 1.3b: Reference QA
+测试 Step 1.3b 生成 Reference QA Report
 """
 import asyncio
 import sys
@@ -16,14 +16,14 @@ from app.models.document import DocumentType
 from app.models.project import StepStatus
 
 
-async def test_step_1_1b():
-    """测试 Step 1.1b: Reference QA"""
+async def test_step_1_3b():
+    """测试 Step 1.3b: Reference QA"""
 
     # 使用现有项目
     project_id = "physics-driven-compressed-sens-9d772ae8"
 
     print("=" * 80)
-    print("Testing Step 1.1b: Reference QA")
+    print("Testing Step 1.3b: Reference QA")
     print("=" * 80)
     print(f"\nProject ID: {project_id}")
 
@@ -49,8 +49,8 @@ async def test_step_1_1b():
         print(f"[OK] Literature Matrix found ({len(lit_matrix.content)} chars)")
 
         # 3. 检查 Step 1.1b 状态
-        print("\n[3/5] Checking Step 1.1b status...")
-        step_info = project.steps.get("step_1_1b")
+        print("\n[3/5] Checking Step 1.3b status...")
+        step_info = project.steps.get("step_1_3b")
         if step_info:
             print(f"  Status: {step_info.status}")
             if step_info.completed_at:
@@ -60,26 +60,26 @@ async def test_step_1_1b():
             if step_info.status == StepStatus.COMPLETED:
                 print("  [!] Step already completed. Forcing re-execution...")
                 from app.models.project import StepStatus as PS
-                project.steps["step_1_1b"].status = PS.PENDING
+                project.steps["step_1_3b"].status = PS.PENDING
                 await project_manager._save_project(project)
         else:
             print("  Status: Not started")
 
         # 4. 执行 Step 1.1b
-        print("\n[4/5] Executing Step 1.1b: Reference QA...")
+        print("\n[4/5] Executing Step 1.3b: Reference QA...")
         print("  (This may take 1-2 minutes...)")
 
-        updated_project = await project_manager.execute_step(project, "step_1_1b")
+        updated_project = await project_manager.execute_step(project, "step_1_3b")
 
         # 检查步骤状态
-        step_info = updated_project.steps.get("step_1_1b")
+        step_info = updated_project.steps.get("step_1_3b")
         if step_info and step_info.status == StepStatus.COMPLETED:
-            print("[OK] Step 1.1b completed successfully")
+            print("[OK] Step 1.3b completed successfully")
         elif step_info and step_info.status == StepStatus.FAILED:
-            print(f"[X] Step 1.1b failed: {step_info.error_message}")
+            print(f"[X] Step 1.3b failed: {step_info.error_message}")
             return
         else:
-            print(f"[?] Step 1.1b status: {step_info.status if step_info else 'Unknown'}")
+            print(f"[?] Step 1.3b status: {step_info.status if step_info else 'Unknown'}")
 
         # 5. 验证生成的文档
         print("\n[5/5] Verifying generated document...")
@@ -153,7 +153,7 @@ async def test_step_1_1b():
                     for suggestion in suggestions:
                         print(f"    - {suggestion}")
         else:
-            print("  Gate 1.6 not checked yet (will be auto-checked after Step 1.1b)")
+            print("  Gate 1.6 not checked yet (will be auto-checked after Step 1.3b)")
 
         print("\n" + "=" * 80)
         print("Test completed successfully!")
@@ -166,4 +166,4 @@ async def test_step_1_1b():
 
 
 if __name__ == "__main__":
-    asyncio.run(test_step_1_1b())
+    asyncio.run(test_step_1_3b())

@@ -7,17 +7,18 @@ import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-from app.models.project import Project, ProjectConfig, ProjectStatus, StepInfo, StepStatus
+from app.models.project import Project, ProjectConfig, ProjectStatus, StepInfo, StepStatus, LoopHistoryEntry
 from app.models.document import DocumentType
 from app.models.gate import GateVerdict
 from app.services.gate_checker import GateChecker
 from app.steps.step_s1 import Step_S1_Bootloader
 from app.steps.step0 import Step0_1_IntakeCard, Step0_2_VenueTaste
 from app.steps.step1 import (
-    Step1_1_DeepResearch,
-    Step1_1b_ReferenceQA,
+    Step1_1a_SearchPlan,
+    Step1_1b_Hunt,
+    Step1_1c_Synthesis,
+    Step1_3b_ReferenceQA,
     Step1_2_TopicDecision,
-    Step1_2b_TopicAlignmentCheck,
     Step1_3_KillerPriorCheck,
     Step1_4_ClaimsFreeze,
     Step1_5_FigureFirstStory
@@ -31,11 +32,24 @@ from app.steps.step2 import (
     Step2_4b_PatchPropagation,
     Step2_5_PlanFreeze
 )
+from app.steps.step3 import Step3_Init, Step3_Execute
+from app.steps.step4 import Step4_Collect, Step4_FigurePolish, Step4_Assembly, Step4_CitationQA, Step4_ReproCheck, Step4_Package
+from app.steps.step1_idea_lab import Step1_IdeaLab
 from app.utils.file_manager import FileManager
 from app.utils.git_manager import GitManager
 from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
+
+# v7 SOP Section 3.3: Loop 回退定义
+# Kill 优先于无限循环，超过最大次数 → Human 决策 Kill/Pivot/Downgrade
+LOOP_DEFINITIONS = {
+    "gate_1":   {"loop_id": "loop_a", "target_step": "step_1_1a", "max_retries": 2},
+    "gate_1_5": {"loop_id": "loop_b", "target_step": "step_1_2", "max_retries": 2},
+    "gate_1_6": {"loop_id": "loop_c", "target_step": "step_1_1b", "max_retries": 2},
+    "gate_2":   {"loop_id": "loop_d", "target_step": "step_2_1", "max_retries": 1},
+    "red_team": {"loop_id": "loop_e", "target_step": "step_2_1", "max_retries": 1},
+}
 
 
 class ProjectManager:
@@ -155,8 +169,40 @@ class ProjectManager:
             # 初始化项目目录
             self.file_manager.ensure_project_structure(project_id)
 
+            # 导出 gate 规则到 gates/rules/ (v7 Appendix B)
+            from app.services.gate_rules_exporter import export_gate_rules
+            try:
+                export_gate_rules(project_id, self.file_manager)
+            except Exception as e:
+                logger.warning(f"Failed to export gate rules: {e}")
+
             # 初始化 Git 仓库
             self.git_manager.init_repo(project_id)
+
+            # v7.1: Initialize AGENTS.md + MEMORY.md
+            try:
+                from pathlib import Path
+                from app.services.snapshot_generator import SnapshotGenerator, AgentsMdConfig
+                from app.services.memory_store import MemoryStore
+                from app.config import settings
+                project_path = str(Path(settings.projects_path) / project_id)
+
+                # Initialize AGENTS.md (v7.1)
+                snapshot_gen = SnapshotGenerator(project_path)
+                agents_config = AgentsMdConfig(
+                    project_overview=config.topic[:200],
+                    rigor_profile=getattr(config, 'rigor_profile', None) or "top_journal",
+                    north_star=getattr(config, 'north_star', "") or "",
+                )
+                snapshot_gen.initialize_agents_md_v71(agents_config)
+
+                # Initialize MEMORY.md
+                memory_store = MemoryStore(project_path)
+                memory_store.initialize()
+
+                logger.info(f"v7.1: AGENTS.md + MEMORY.md initialized for project {project_id}")
+            except Exception as init_err:
+                logger.warning(f"v7.1 initialization failed (non-blocking): {init_err}")
 
             # 保存项目配置
             await self._save_project(project)
@@ -188,18 +234,14 @@ class ProjectManager:
                 logger.error(f"Step prerequisites not met: {error_msg}")
                 raise ValueError(f"无法执行步骤 {step_id}: {error_msg}")
 
-            # 检查步骤是否已完成（没有错误信息）
+            # 检查步骤是否已完成
             if step_id in project.steps:
                 step_info = project.steps[step_id]
-                if step_info.status == StepStatus.COMPLETED and not step_info.error_message:
-                    logger.warning(f"Step {step_id} already completed successfully")
-                    return project
-                elif step_info.status == StepStatus.COMPLETED and step_info.error_message:
-                    # 如果步骤状态是 COMPLETED 但有错误信息，重置为 PENDING 以便重试
-                    logger.info(f"Step {step_id} has error, resetting to PENDING for retry")
+                if step_info.status == StepStatus.COMPLETED:
+                    # 允许重新执行：重置为 PENDING，清除相关 gate
+                    logger.info(f"Step {step_id} re-execution requested, resetting to PENDING")
                     project.update_step_status(step_id, StepStatus.PENDING)
                     project.steps[step_id].error_message = None
-                    # 清除相关的 gate 状态
                     self._clear_related_gates(project, step_id)
                     await self._save_project(project)
 
@@ -219,21 +261,34 @@ class ProjectManager:
             elif step_id == "step_0_2":
                 step = Step0_2_VenueTaste(project)
                 document = await step.execute()
-            elif step_id == "step_1_1":
-                step = Step1_1_DeepResearch(project)
+            elif step_id == "step_1_1a":
+                step = Step1_1a_SearchPlan(project)
                 document = await step.execute()
             elif step_id == "step_1_1b":
-                step = Step1_1b_ReferenceQA(project)
+                step = Step1_1b_Hunt(project)
+                document = await step.execute()
+            elif step_id == "step_1_1c":
+                step = Step1_1c_Synthesis(project)
+                document = await step.execute()
+            elif step_id == "step_1_3b":
+                step = Step1_3b_ReferenceQA(project)
                 document = await step.execute()
             elif step_id == "step_1_2":
                 step = Step1_2_TopicDecision(project)
                 document = await step.execute()
-            elif step_id == "step_1_2b":
-                step = Step1_2b_TopicAlignmentCheck(project)
-                document = await step.execute()
             elif step_id == "step_1_3":
                 step = Step1_3_KillerPriorCheck(project)
                 document = await step.execute()
+            elif step_id == "step_1_3b_idea_lab":
+                # v7.1: Conditional execution — only if enable_idea_lab=True
+                if getattr(project.config, 'enable_idea_lab', False):
+                    step = Step1_IdeaLab(project)
+                    document = await step.execute()
+                else:
+                    logger.info("Idea-Lab disabled, skipping step_1_3b_idea_lab")
+                    if "step_1_3b_idea_lab" in project.steps:
+                        project.steps["step_1_3b_idea_lab"].status = StepStatus.SKIPPED
+                    return project
             elif step_id == "step_1_4":
                 step = Step1_4_ClaimsFreeze(project)
                 document = await step.execute()
@@ -261,6 +316,30 @@ class ProjectManager:
             elif step_id == "step_2_5":
                 step = Step2_5_PlanFreeze(project)
                 document = await step.execute()
+            elif step_id == "step_3_init":
+                step = Step3_Init(project)
+                document = await step.execute()
+            elif step_id == "step_3_exec":
+                step = Step3_Execute(project)
+                document = await step.execute()
+            elif step_id == "step_4_collect":
+                step = Step4_Collect(project)
+                document = await step.execute()
+            elif step_id == "step_4_figure_polish":
+                step = Step4_FigurePolish(project)
+                document = await step.execute()
+            elif step_id == "step_4_assembly":
+                step = Step4_Assembly(project)
+                document = await step.execute()
+            elif step_id == "step_4_citation_qa":
+                step = Step4_CitationQA(project)
+                document = await step.execute()
+            elif step_id == "step_4_repro":
+                step = Step4_ReproCheck(project)
+                document = await step.execute()
+            elif step_id == "step_4_package":
+                step = Step4_Package(project)
+                document = await step.execute()
             else:
                 raise ValueError(f"Unknown step: {step_id}")
 
@@ -285,42 +364,109 @@ class ProjectManager:
             # 保存项目
             await self._save_project(project)
 
+            # v7.1: Update AGENTS.md dynamic section after step completion
+            try:
+                from app.services.snapshot_generator import SnapshotGenerator
+                from app.config import settings
+                from pathlib import Path
+                project_path = str(Path(settings.projects_path) / project.project_id)
+                snapshot_gen = SnapshotGenerator(project_path)
+                dynamic = snapshot_gen.generate_agents_md_dynamic_section(
+                    state={"current_phase": step_id, "step_status": "completed"},
+                )
+                snapshot_gen.update_agents_md(dynamic)
+            except Exception as snap_err:
+                logger.debug(f"v7.1: AGENTS.md update after step failed (non-blocking): {snap_err}")
+
             logger.info(f"Step {step_id} completed successfully")
 
-            # 自动检查相关的 Gate（v4.0 NEW）
-            # Gate 1.6: 在 Step 1.1b (Reference QA) 完成后自动检查
-            if step_id == "step_1_1b":
-                logger.info("Auto-checking Gate 1.6 after Step 1.1b completion")
+            # 自动检查相关的 Gate（v7 SOP 3.4: 所有 Gate 需人工签字，自动检查仅作参考）
+
+            # Gate 0: 在 Step 0.2 (Venue Taste) 完成后自动检查
+            if step_id == "step_0_2":
+                logger.info("Auto-checking Gate 0 after Step 0.2 completion")
+                try:
+                    gate_result = await self.gate_checker.check_gate_0(project)
+                    result_data = gate_result.model_dump()
+                    result_data["requires_human_approval"] = True
+                    project.gate_results["gate_0"] = result_data
+                    # Gate 0 需要人工确认，不自动 pass
+                    project.gate_0_passed = False
+                    logger.info(f"Gate 0 auto-check result: {gate_result.verdict.value} (awaiting human approval)")
+                    await self._save_project(project)
+                except Exception as e:
+                    logger.error(f"Gate 0 auto-check failed: {e}")
+
+            # Gate 1.6: 在 Step 1.3b (Reference QA) 完成后自动检查（仅作参考，需人工确认）
+            if step_id == "step_1_3b":
+                logger.info("Auto-checking Gate 1.6 after Step 1.3b completion")
                 try:
                     gate_result = await self.gate_checker.check_gate_1_6(project)
-                    # 保存检查结果（无论通过与否）
-                    project.gate_results["gate_1_6"] = gate_result.model_dump()
-                    if gate_result.verdict == GateVerdict.PASS:
-                        project.gate_1_6_passed = True
-                        logger.info("Gate 1.6 auto-check: PASS")
-                    else:
-                        project.gate_1_6_passed = False
-                        logger.warning("Gate 1.6 auto-check: FAIL - manual review required")
+                    result_data = gate_result.model_dump()
+                    result_data["requires_human_approval"] = True
+                    project.gate_results["gate_1_6"] = result_data
+                    # Gate 1.6 需要人工确认，不自动 pass
+                    project.gate_1_6_passed = False
+                    logger.info(f"Gate 1.6 auto-check result: {gate_result.verdict.value} (awaiting human approval)")
                     await self._save_project(project)
                 except Exception as e:
                     logger.error(f"Gate 1.6 auto-check failed: {e}")
 
-            # Gate 1.25: 在 Step 1.2b (Topic Alignment Check) 完成后自动检查
-            if step_id == "step_1_2b":
-                logger.info("Auto-checking Gate 1.25 after Step 1.2b completion")
+            # Gate 1 (含 Topic Alignment): 在 Step 1.2 完成后自动检查
+            if step_id == "step_1_2":
+                logger.info("Auto-checking Gate 1 after Step 1.2 completion (Topic Alignment merged into Gate 1)")
                 try:
-                    gate_result = await self.gate_checker.check_gate_1_25(project)
-                    # 保存检查结果（无论通过与否）
-                    project.gate_results["gate_1_25"] = gate_result.model_dump()
-                    if gate_result.verdict == GateVerdict.PASS:
-                        project.gate_1_25_passed = True
-                        logger.info("Gate 1.25 auto-check: PASS")
-                    else:
-                        project.gate_1_25_passed = False
-                        logger.warning("Gate 1.25 auto-check: FAIL - manual review required")
+                    gate_result = await self.gate_checker.check_gate_1(project)
+                    result_data = gate_result.model_dump()
+                    result_data["requires_human_approval"] = True
+                    project.gate_results["gate_1"] = result_data
+                    # Gate 1 需要人工确认，不自动 pass
+                    project.gate_1_passed = False
+                    # Sync deprecated gate_1_25_passed for backward compat
+                    project.gate_1_25_passed = False
+                    logger.info(f"Gate 1 auto-check result: {gate_result.verdict.value} (awaiting human approval)")
                     await self._save_project(project)
                 except Exception as e:
-                    logger.error(f"Gate 1.25 auto-check failed: {e}")
+                    logger.error(f"Gate 1 auto-check after Step 1.2 failed: {e}")
+
+            # Gate 1.5: 在 Step 1.3 (Killer Prior) 完成后自动检查
+            if step_id == "step_1_3":
+                logger.info("Auto-checking Gate 1.5 after Step 1.3 completion (Killer Prior)")
+                try:
+                    gate_result = await self.gate_checker.check_gate_1_5(project)
+                    result_data = gate_result.model_dump()
+                    result_data["requires_human_approval"] = True
+                    project.gate_results["gate_1_5"] = result_data
+                    # Gate 1.5 需要人工确认，不自动 pass
+                    project.gate_1_5_passed = False
+                    logger.info(f"Gate 1.5 auto-check result: {gate_result.verdict.value} (awaiting human approval)")
+                    await self._save_project(project)
+                except Exception as e:
+                    logger.error(f"Gate 1.5 auto-check after Step 1.3 failed: {e}")
+
+            # Gate 2: 在 Step 2.4b (Patch Propagation) 完成后自动检查
+            if step_id == "step_2_4b" or (step_id == "step_2_4" and self._has_no_patches(project)):
+                # 无 patch 时 S6 完成后直接跳过 step_2_4b，自动检查 Gate 2
+                if step_id == "step_2_4" and self._has_no_patches(project):
+                    logger.info("No patches from Red Team — auto-skipping step_2_4b, proceeding to Gate 2")
+                    project.update_step_status("step_2_4b", StepStatus.COMPLETED)
+                    if "step_2_4b" in project.steps:
+                        project.steps["step_2_4b"].error_message = "Auto-skipped: no patches from S6"
+                        from datetime import datetime
+                        project.steps["step_2_4b"].completed_at = datetime.now()
+
+                logger.info("Auto-checking Gate 2 after S6/S6b completion")
+                try:
+                    gate_result = await self.gate_checker.check_gate_2(project)
+                    result_data = gate_result.model_dump()
+                    result_data["requires_human_approval"] = True
+                    project.gate_results["gate_2"] = result_data
+                    # Gate 2 需要人工确认，不自动 pass
+                    project.gate_2_passed = False
+                    logger.info(f"Gate 2 auto-check result: {gate_result.verdict.value} (awaiting human approval)")
+                    await self._save_project(project)
+                except Exception as e:
+                    logger.error(f"Gate 2 auto-check after Step 2.4b failed: {e}")
 
             # 步骤间延迟，避免API速率限制
             if next_step:
@@ -349,7 +495,7 @@ class ProjectManager:
 
         Args:
             project: 项目对象
-            gate_name: Gate 名称 (gate_0, gate_1, gate_1_25, gate_1_5, gate_1_6, gate_2)
+            gate_name: Gate 名称 (gate_0, gate_1, gate_1_5, gate_1_6, gate_2; gate_1_25 deprecated → redirects to gate_1)
 
         Returns:
             Dict: Gate 检查结果
@@ -357,39 +503,73 @@ class ProjectManager:
         try:
             logger.info(f"Checking {gate_name} for project {project.project_id}")
 
-            # 执行 Gate 检查
+            # 清除缓存，确保重新检查时获取最新结果
+            self.gate_checker.clear_cache(project.project_id, gate_name)
+
+            # 执行 Gate 检查（v7 SOP 3.4: 所有 Gate 需人工签字，自动检查仅作参考）
             if gate_name == "gate_0":
                 result = await self.gate_checker.check_gate_0(project)
-                project.gate_results["gate_0"] = result.model_dump()
-                project.gate_0_passed = (result.verdict == GateVerdict.PASS)
+                result_data = result.model_dump()
+                result_data["requires_human_approval"] = True
+                project.gate_results["gate_0"] = result_data
+                project.gate_0_passed = False  # 需人工确认
             elif gate_name == "gate_1":
                 result = await self.gate_checker.check_gate_1(project)
-                project.gate_results["gate_1"] = result.model_dump()
-                project.gate_1_passed = (result.verdict == GateVerdict.PASS)
+                result_data = result.model_dump()
+                result_data["requires_human_approval"] = True
+                project.gate_results["gate_1"] = result_data
+                project.gate_1_passed = False  # 需人工确认
             elif gate_name == "gate_1_25":
-                result = await self.gate_checker.check_gate_1_25(project)
-                project.gate_results["gate_1_25"] = result.model_dump()
-                project.gate_1_25_passed = (result.verdict == GateVerdict.PASS)
+                # DEPRECATED v7.0: gate_1_25 redirects to gate_1
+                logger.warning("gate_1_25 is deprecated, redirecting to gate_1")
+                result = await self.gate_checker.check_gate_1(project)
+                result_data = result.model_dump()
+                result_data["requires_human_approval"] = True
+                project.gate_results["gate_1"] = result_data
+                project.gate_1_passed = False  # 需人工确认
+                project.gate_1_25_passed = False  # backward compat
             elif gate_name == "gate_1_5":
                 result = await self.gate_checker.check_gate_1_5(project)
-                project.gate_results["gate_1_5"] = result.model_dump()
-                project.gate_1_5_passed = (result.verdict == GateVerdict.PASS)
+                result_data = result.model_dump()
+                result_data["requires_human_approval"] = True
+                project.gate_results["gate_1_5"] = result_data
+                project.gate_1_5_passed = False  # 需人工确认
             elif gate_name == "gate_1_6":
                 result = await self.gate_checker.check_gate_1_6(project)
-                project.gate_results["gate_1_6"] = result.model_dump()
-                project.gate_1_6_passed = (result.verdict == GateVerdict.PASS)
+                result_data = result.model_dump()
+                result_data["requires_human_approval"] = True
+                project.gate_results["gate_1_6"] = result_data
+                project.gate_1_6_passed = False  # 需人工确认
             elif gate_name == "gate_2":
                 result = await self.gate_checker.check_gate_2(project)
-                project.gate_results["gate_2"] = result.model_dump()
-                project.gate_2_passed = (result.verdict == GateVerdict.PASS)
+                result_data = result.model_dump()
+                result_data["requires_human_approval"] = True
+                project.gate_results["gate_2"] = result_data
+                project.gate_2_passed = False  # 需人工确认
+            elif gate_name == "gate_delivery":
+                result = await self.gate_checker.check_delivery_gate(project)
+                project.gate_results["gate_delivery"] = result.model_dump()
+                project.gate_delivery_passed = (result.verdict == GateVerdict.PASS)
             else:
                 raise ValueError(f"Unknown gate: {gate_name}")
 
             # 保存项目
             await self._save_project(project)
 
+            # 持久化 gate 结果到 gates/results/ (v7 Appendix B)
+            self._save_gate_result_json(project.project_id, gate_name, result)
+
+            # v7 Loop 回退：Gate FAIL 时自动触发 Loop 回退
+            loop_action = None
+            if result.verdict == GateVerdict.FAIL and gate_name in LOOP_DEFINITIONS:
+                loop_action = await self.handle_gate_failure(project, gate_name)
+                logger.info(f"Loop action for {gate_name}: {loop_action.get('action')}")
+
             logger.info(f"{gate_name} check result: {result.verdict.value}")
-            return result.model_dump()
+            response = result.model_dump()
+            if loop_action:
+                response["loop_action"] = loop_action
+            return response
 
         except Exception as e:
             logger.error(f"Failed to check {gate_name}: {e}")
@@ -428,12 +608,11 @@ class ProjectManager:
                 },
                 "gate_0_passed": project.gate_0_passed,
                 "gate_1_passed": project.gate_1_passed,
-                "gate_1_25_passed": project.gate_1_25_passed,
                 "gate_1_5_passed": project.gate_1_5_passed,
                 "gate_1_6_passed": project.gate_1_6_passed,
                 "gate_2_passed": project.gate_2_passed,
                 "gate_results": project.gate_results,  # v4.0 NEW - 返回完整的 Gate 检查结果
-                "loop_history": project.loop_history,  # v7.0 NEW - 返回 Loop 历史记录
+                "loop_history": [e.model_dump() for e in project.loop_history],  # v7.0 NEW - 返回 Loop 历史记录
                 "steps": {
                     step_id: {
                         "step_id": step_id,
@@ -443,8 +622,8 @@ class ProjectManager:
                         "started_at": info.started_at.isoformat() if info.started_at else None,
                         "completed_at": info.completed_at.isoformat() if info.completed_at else None,
                         "error_message": info.error_message,
-                        "retry_count": info.retry_count,  # v7.0 NEW - 返回重试次数
-                        "max_retries": info.max_retries  # v7.0 NEW - 返回最大重试次数
+                        "retry_count": info.retry_count,  # v7.0 NEW
+                        "max_retries": info.max_retries  # v7.0 NEW
                     }
                     for step_id, info in project.steps.items()
                 },
@@ -696,6 +875,218 @@ class ProjectManager:
             logger.error(f"Failed to delete project {project_id}: {e}")
             raise
 
+    async def handle_gate_failure(self, project: Project, gate_name: str) -> Dict[str, Any]:
+        """
+        处理 Gate 失败的 Loop 回退逻辑 (v7 SOP Section 3.3)
+
+        Args:
+            project: 项目对象
+            gate_name: 失败的 Gate 名称
+
+        Returns:
+            Dict: 回退结果 {action, loop_id, gate_name, target_step, retry_number, steps_reset}
+        """
+        if gate_name not in LOOP_DEFINITIONS:
+            return {"action": "no_loop", "gate_name": gate_name, "message": f"No loop defined for {gate_name}"}
+
+        loop_def = LOOP_DEFINITIONS[gate_name]
+        loop_id = loop_def["loop_id"]
+        target_step = loop_def["target_step"]
+        max_retries = loop_def["max_retries"]
+
+        # 统计该 loop 已有的 rollback 次数
+        rollback_count = sum(
+            1 for entry in project.loop_history
+            if entry.loop_id == loop_id and entry.action == "rollback"
+        )
+
+        if rollback_count < max_retries:
+            # 执行回退
+            steps_reset = self._rollback_to_step(project, target_step, gate_name)
+            retry_number = rollback_count + 1
+
+            entry = LoopHistoryEntry(
+                loop_id=loop_id,
+                gate_name=gate_name,
+                target_step=target_step,
+                retry_number=retry_number,
+                action="rollback",
+            )
+            project.loop_history.append(entry)
+            project.current_step = target_step
+
+            # 更新目标步骤的 retry_count
+            if target_step in project.steps:
+                project.steps[target_step].retry_count = retry_number
+
+            await self._save_project(project)
+
+            logger.info(f"Loop {loop_id}: rollback to {target_step} (retry {retry_number}/{max_retries})")
+            return {
+                "action": "rollback",
+                "loop_id": loop_id,
+                "gate_name": gate_name,
+                "target_step": target_step,
+                "retry_number": retry_number,
+                "max_retries": max_retries,
+                "steps_reset": steps_reset,
+            }
+        else:
+            # 已耗尽重试次数 → 创建 BLOCKING HIL Ticket 让 Human 决策
+            entry = LoopHistoryEntry(
+                loop_id=loop_id,
+                gate_name=gate_name,
+                target_step=target_step,
+                retry_number=rollback_count,
+                action="exhausted",
+            )
+            project.loop_history.append(entry)
+            await self._save_project(project)
+
+            logger.warning(f"Loop {loop_id}: exhausted ({rollback_count}/{max_retries}), creating HIL ticket for human decision")
+
+            # v7 SOP 3.3: Loop 耗尽后创建 BLOCKING HIL Ticket
+            ticket_id = None
+            try:
+                from app.services.hil_service import HILService
+                from app.models.hil import HILTicketCreate, QuestionType, TicketPriority
+
+                gate_display = {
+                    "gate_1": "Gate 1 (Topic Candidate)",
+                    "gate_1_5": "Gate 1.5 (Killer Prior)",
+                    "gate_1_6": "Gate 1.6 (Reference QA)",
+                    "gate_2": "Gate 2 (Plan Freeze)",
+                    "red_team": "Red Team Review",
+                }.get(gate_name, gate_name)
+
+                hil_service = HILService()
+                ticket_create = HILTicketCreate(
+                    project_id=project.project_id,
+                    step_id=target_step,
+                    question_type=QuestionType.DECISION,
+                    question=f"{gate_display} 已连续 {rollback_count} 次 FAIL，Loop {loop_id} 重试次数已耗尽。请决定下一步操作。",
+                    options=["Kill（终止项目）", "Pivot（更换方向）", "Downgrade（降级 Rigor Profile）"],
+                    default_answer="Kill（终止项目）",
+                    priority=TicketPriority.CRITICAL,
+                    blocking=True,
+                    timeout_hours=72.0,
+                    context={
+                        "loop_id": loop_id,
+                        "gate_name": gate_name,
+                        "retry_count": rollback_count,
+                        "max_retries": max_retries,
+                        "target_step": target_step,
+                    },
+                )
+                ticket = await hil_service.create_ticket(ticket_create)
+                ticket_id = ticket.ticket_id
+                logger.info(f"Created HIL ticket {ticket_id} for loop exhaustion: {gate_name}")
+            except Exception as e:
+                logger.error(f"Failed to create HIL ticket for loop exhaustion: {e}")
+
+            return {
+                "action": "exhausted",
+                "loop_id": loop_id,
+                "gate_name": gate_name,
+                "target_step": target_step,
+                "retry_number": rollback_count,
+                "max_retries": max_retries,
+                "steps_reset": [],
+                "ticket_id": ticket_id,
+                "message": "Loop exhausted. Human decision required: Kill / Pivot / Downgrade.",
+            }
+
+    def _rollback_to_step(self, project: Project, target_step: str, gate_name: str) -> List[str]:
+        """
+        回退到指定步骤，重置从 target_step 到 gate 边界的所有步骤
+
+        Args:
+            project: 项目对象
+            target_step: 回退目标步骤 ID
+            gate_name: 触发的 Gate 名称
+
+        Returns:
+            List[str]: 被重置的步骤 ID 列表
+        """
+        # Gate 边界映射：gate → 该阶段最后一个步骤
+        gate_boundary = {
+            "gate_1": "step_1_5",
+            "gate_1_5": "step_1_5",
+            "gate_1_6": "step_1_5",
+            "gate_2": "step_2_4b",
+            "red_team": "step_2_4b",
+        }
+
+        step_sequence = [
+            "step_0_1", "step_0_2",
+            "step_1_1a", "step_1_1b", "step_1_1c", "step_1_2", "step_1_3", "step_1_3b", "step_1_4", "step_1_5",
+            "step_2_0", "step_2_1", "step_2_2", "step_2_3", "step_2_4", "step_2_4b", "step_2_5",
+        ]
+
+        boundary_step = gate_boundary.get(gate_name, "step_2_5")
+
+        try:
+            start_idx = step_sequence.index(target_step)
+            end_idx = step_sequence.index(boundary_step)
+        except ValueError:
+            logger.error(f"Invalid step in rollback: target={target_step}, boundary={boundary_step}")
+            return []
+
+        steps_reset = []
+        for i in range(start_idx, end_idx + 1):
+            sid = step_sequence[i]
+            if sid in project.steps:
+                project.steps[sid].status = StepStatus.PENDING
+                project.steps[sid].started_at = None
+                project.steps[sid].completed_at = None
+                project.steps[sid].error_message = None
+                steps_reset.append(sid)
+
+        # 重置相关 gate 状态
+        gate_flag_map = {
+            "gate_1": "gate_1_passed",
+            "gate_1_5": "gate_1_5_passed",
+            "gate_1_6": "gate_1_6_passed",
+            "gate_2": "gate_2_passed",
+            "red_team": "gate_2_passed",
+        }
+        flag = gate_flag_map.get(gate_name)
+        if flag:
+            setattr(project, flag, False)
+
+        # 删除 gate_results 中的记录
+        result_key = gate_name if gate_name != "red_team" else "gate_2"
+        if result_key in project.gate_results:
+            del project.gate_results[result_key]
+
+        logger.info(f"Rollback: reset {len(steps_reset)} steps from {target_step} to {boundary_step}")
+        return steps_reset
+
+    def _has_no_patches(self, project: Project) -> bool:
+        """检查 S6 Red Team 是否产生了 patches"""
+        from pathlib import Path
+        from app.config import settings
+
+        patches_dir = Path(settings.projects_path) / project.project_id / "red_team" / "patches" / project.project_id
+        if not patches_dir.exists():
+            return True
+        # 检查是否有 .json patch 文件
+        patch_files = list(patches_dir.glob("*.json"))
+        if not patch_files:
+            return True
+        # 检查是否有 approved patches
+        import json
+        for pf in patch_files:
+            try:
+                with open(pf, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                review = data.get('review', {})
+                if review.get('approved', False):
+                    return False  # 有 approved patch
+            except Exception:
+                continue
+        return True  # 没有 approved patches
+
     def _get_next_step(self, current_step: str) -> Optional[str]:
         """
         获取下一个步骤
@@ -709,11 +1100,12 @@ class ProjectManager:
         step_sequence = [
             "step_0_1",
             "step_0_2",
-            "step_1_1",
+            "step_1_1a",
             "step_1_1b",
+            "step_1_1c",
             "step_1_2",
-            "step_1_2b",
             "step_1_3",
+            "step_1_3b",
             "step_1_4",
             "step_1_5",
             "step_2_0",
@@ -723,6 +1115,14 @@ class ProjectManager:
             "step_2_4",
             "step_2_4b",
             "step_2_5",
+            "step_3_init",
+            "step_3_exec",
+            "step_4_collect",
+            "step_4_figure_polish",
+            "step_4_assembly",
+            "step_4_citation_qa",
+            "step_4_repro",
+            "step_4_package",
         ]
 
         try:
@@ -745,11 +1145,18 @@ class ProjectManager:
         Returns:
             tuple[bool, str]: (是否满足前置条件, 错误消息)
         """
+        # Test mode: 跳过所有前置条件和 gate 检查
+        from app.config import settings
+        if settings.test_mode:
+            logger.info(f"[TEST MODE] Skipping prerequisite checks for {step_id}")
+            return True, ""
         step_sequence = [
             "step_s_1",  # v6.0: Bootloader
             "step_0_1", "step_0_2",
-            "step_1_1", "step_1_1b", "step_1_2", "step_1_2b", "step_1_3", "step_1_4", "step_1_5",
+            "step_1_1a", "step_1_1b", "step_1_1c", "step_1_2", "step_1_3", "step_1_3b", "step_1_4", "step_1_5",
             "step_2_0", "step_2_1", "step_2_2", "step_2_3", "step_2_4", "step_2_4b", "step_2_5",
+            "step_3_init", "step_3_exec",
+            "step_4_collect", "step_4_figure_polish", "step_4_assembly", "step_4_citation_qa", "step_4_repro", "step_4_package",
         ]
 
         try:
@@ -757,9 +1164,14 @@ class ProjectManager:
         except ValueError:
             return False, f"未知步骤: {step_id}"
 
+        # 可选步骤：跳过时不阻塞后续步骤
+        OPTIONAL_STEPS = {"step_1_5", "step_2_0", "step_2_4b"}
+
         # 检查所有前置步骤是否已完成
         for i in range(step_index):
             prev_step_id = step_sequence[i]
+            if prev_step_id in OPTIONAL_STEPS:
+                continue  # 可选步骤不阻塞后续步骤
             if prev_step_id in project.steps:
                 prev_step = project.steps[prev_step_id]
                 if prev_step.status != StepStatus.COMPLETED:
@@ -768,6 +1180,21 @@ class ProjectManager:
         # 特殊检查：Step 2 需要 Gate 1.5 通过
         if step_id.startswith("step_2_") and not project.gate_1_5_passed:
             return False, "Gate 1.5 (Killer Prior Check) 必须通过才能进入 Step 2"
+
+        # 特殊检查：S7 Plan Freeze (step_2_5) 需要 Gate 2 通过
+        if step_id == "step_2_5" and not project.gate_2_passed:
+            return False, "Gate 2 必须通过才能执行 S7 Plan Freeze"
+
+        # 特殊检查：Step 3 需要 Gate 2 通过
+        if step_id.startswith("step_3_") and not project.gate_2_passed:
+            return False, "Gate 2 (Plan Freeze) 必须通过才能进入 Step 3"
+
+        # 特殊检查：Step 4 需要 Step 3 完成
+        if step_id.startswith("step_4_") and not project.step3_completed:
+            # 允许 step_4 即使 step3_completed 未设置，只要 step_3_exec 已完成
+            step_3_exec = project.steps.get("step_3_exec")
+            if not step_3_exec or step_3_exec.status != StepStatus.COMPLETED:
+                return False, "Step 3 (Research Execution) 必须完成才能进入 Step 4"
 
         return True, ""
 
@@ -785,11 +1212,10 @@ class ProjectManager:
         # 映射步骤到其影响的 gate
         step_gate_mapping = {
             "step_0_2": ["gate_0"],  # Step 0.2 影响 Gate 0
-            "step_1_1b": ["gate_1_6"],  # Step 1.1b 影响 Gate 1.6
-            "step_1_2": ["gate_1"],  # Step 1.2 影响 Gate 1
-            "step_1_2b": ["gate_1_25"],  # Step 1.2b 影响 Gate 1.25
+            "step_1_3b": ["gate_1_6"],  # Step 1.3b 影响 Gate 1.6
+            "step_1_2": ["gate_1"],  # Step 1.2 影响 Gate 1 (v7.0: Topic Alignment merged into Gate 1)
             "step_1_3": ["gate_1_5"],  # Step 1.3 影响 Gate 1.5 (Killer Prior)
-            "step_2_5": ["gate_2"],  # Step 2.5 影响 Gate 2
+            "step_2_4b": ["gate_2"],  # Step 2.4b (Patch Propagation) 影响 Gate 2
         }
 
         # 如果步骤影响某些 gate，清除这些 gate 的状态
@@ -805,11 +1231,6 @@ class ProjectManager:
                     if "gate_1" in project.gate_results:
                         del project.gate_results["gate_1"]
                     logger.info(f"Cleared gate_1 status due to {step_id} re-execution")
-                elif gate_name == "gate_1_25":
-                    project.gate_1_25_passed = False
-                    if "gate_1_25" in project.gate_results:
-                        del project.gate_results["gate_1_25"]
-                    logger.info(f"Cleared gate_1_25 status due to {step_id} re-execution")
                 elif gate_name == "gate_1_5":
                     project.gate_1_5_passed = False
                     if "gate_1_5" in project.gate_results:
@@ -825,6 +1246,27 @@ class ProjectManager:
                     if "gate_2" in project.gate_results:
                         del project.gate_results["gate_2"]
                     logger.info(f"Cleared gate_2 status due to {step_id} re-execution")
+
+    def _save_gate_result_json(self, project_id: str, gate_name: str, result) -> None:
+        """
+        Persist gate result as timestamped JSON to gates/results/ (v7 Appendix B).
+        """
+        import json
+
+        try:
+            gates_results_path = self.file_manager.get_gates_path(project_id) / "results"
+            gates_results_path.mkdir(parents=True, exist_ok=True)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{gate_name}_{timestamp}.json"
+            filepath = gates_results_path / filename
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(result.model_dump(), f, indent=2, ensure_ascii=False, default=str)
+
+            logger.info(f"Saved gate result: {filepath}")
+        except Exception as e:
+            logger.warning(f"Failed to save gate result JSON for {gate_name}: {e}")
 
     async def _save_project(self, project: Project) -> None:
         """
@@ -862,3 +1304,7 @@ class ProjectManager:
         async with aiofiles.open(project_file, 'r', encoding='utf-8') as f:
             content = await f.read()
             return Project.model_validate_json(content)
+
+    async def load_project(self, project_id: str) -> Optional[Project]:
+        """公开接口：加载项目配置（包装 _load_project）"""
+        return await self._load_project(project_id)

@@ -9,6 +9,7 @@
 | `SECRET_KEY` | JWT 签名密钥，生产环境必须设置强随机字符串 |
 | `OPENAI_API_KEY` | OpenAI API Key |
 | `GEMINI_API_KEY` | Google Gemini API Key |
+| `CLAUDE_API_KEY` | v7.1: Anthropic Claude API Key（可选，Orchestra/执行引擎用） |
 
 ## 数据库
 
@@ -38,9 +39,11 @@
 | `APP_PORT` | `8000` | 监听端口 |
 | `OPENAI_API_BASE` | - | OpenAI 代理 Base URL |
 | `GEMINI_API_BASE` | - | Gemini 代理 Base URL |
-| `OPENAI_MODEL` | `gpt-4-turbo` | 模型名 |
+| `OPENAI_MODEL` | `gpt-4o` | 模型名 |
 | `GEMINI_MODEL` | `gemini-2.0-flash-exp` | 模型名 |
+| `CLAUDE_MODEL` | `claude-opus-4-20250514` | Claude 模型名 |
 | `GEMINI_GEM_CONFIG_PATH` | - | Gemini Gem 配置文件路径（可选） |
+| `TEST_MODE` | `false` | v7: 测试模式（跳过前置/gate，仅 admin 可切换） |
 | `WORKFLOWS_DIR` | `./workflows` | 工作流 YAML 目录 |
 
 其他如 `LOG_LEVEL`、`LOG_FILE`、重试与超时等见 `app/config.py` 中 `Settings` 定义。

@@ -13,7 +13,7 @@ from app.config import settings
 if settings.database_url:
     SQLALCHEMY_DATABASE_URL = settings.database_url
     connect_args = {}
-    DATABASE_PATH = ""  # PostgreSQL 无文件路径
+    DATABASE_PATH = ""
 else:
     _db_path = Path("./data/users.db")
     _db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -41,7 +41,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """启动时创建表（若使用 PostgreSQL，需先执行 docs/postgresql_schema.sql 或由 Alembic 管理）。"""
+    """启动时创建表（若使用 PostgreSQL，需先执行 docs/postgresql_schema.sql）。"""
     from app.db.models import User
     from app.db.activity_models import UserActivityLog, LoginAttempt
     from app.db.refresh_token_models import RefreshToken

@@ -51,12 +51,13 @@ class TestTraceLogger:
         with open(trace_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        assert "# Raw Response Trace" in content
+        # v1.2 updated format
+        assert "# Trace Event:" in content or "# Raw Response Trace" in content
         assert f"**Step ID**: {step_id}" in content
         assert f"**Project ID**: {project_id}" in content
         assert f"**Length**: {len(response)} characters" in content
         assert "## Metadata" in content
-        assert "## Raw Response" in content
+        assert ("## Content" in content or "## Raw Response" in content)
         assert response in content
 
     def test_load_raw_response(self, trace_logger, temp_projects_path):
@@ -154,7 +155,8 @@ class TestTraceLogger:
         with open(trace_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        assert "## Raw Response" in content
+        # v1.2 updated format
+        assert ("## Content" in content or "## Raw Response" in content)
         assert response in content
         # Metadata section should not be present
         assert "## Metadata" not in content

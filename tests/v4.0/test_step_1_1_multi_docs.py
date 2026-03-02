@@ -12,8 +12,8 @@ from app.models.project import Project
 from app.services.project_manager import ProjectManager
 from app.config import settings
 
-async def test_step_1_1():
-    """测试 Step 1.1 多文档生成"""
+async def test_step_1_1a():
+    """测试 Step 1.1a 多文档生成"""
     project_id = "physics-driven-compressed-sens-9d772ae8"
 
     print("=" * 60)
@@ -40,7 +40,7 @@ async def test_step_1_1():
         print("  - Extracting Verified References")
         print()
 
-        result = await manager.execute_step(project, "step_1_1")
+        result = await manager.execute_step(project, "step_1_1a")
 
         print(f"  OK Step 1.1 executed successfully")
         print(f"  OK Project updated: {result.project_id}")
@@ -74,7 +74,7 @@ async def test_step_1_1():
         # 显示统计信息
         print("[4/4] Statistics")
         print(f"  - Project ID: {project_id}")
-        print(f"  - Executed step: step_1_1")
+        print(f"  - Executed step: step_1_1a")
         print(f"  - Expected documents: 4")
         print(f"  - Status: {result.status}")
         print()
@@ -92,5 +92,5 @@ async def test_step_1_1():
     return True
 
 if __name__ == "__main__":
-    success = asyncio.run(test_step_1_1())
+    success = asyncio.run(test_step_1_1a())
     sys.exit(0 if success else 1)

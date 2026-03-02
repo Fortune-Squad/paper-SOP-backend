@@ -81,6 +81,10 @@ vector_db/
 *.tmp
 *.bak
 .cache/
+
+# Windows reserved device names
+nul
+NUL
 """
         gitignore_path = project_path / ".gitignore"
         gitignore_path.write_text(gitignore_content)
@@ -231,6 +235,46 @@ vector_db/
         except Exception as e:
             logger.error(f"Failed to get Git status: {e}")
             return {}
+
+    def create_tag(self, project_id: str, tag_name: str, message: str = "") -> bool:
+        """
+        创建 Git tag (v1.2 DevSpec §11: Freeze Hygiene)
+
+        Args:
+            project_id: 项目 ID
+            tag_name: Tag 名称
+            message: Tag 消息
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            project_path = self.get_project_path(project_id)
+            repo = Repo(project_path)
+            repo.create_tag(tag_name, message=message or f"Freeze tag: {tag_name}")
+            logger.info(f"Created tag '{tag_name}' for project {project_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create tag '{tag_name}': {e}")
+            return False
+
+    def has_uncommitted_changes(self, project_id: str) -> bool:
+        """
+        检查是否有未提交的更改 (v1.2 DevSpec §11: Freeze Hygiene)
+
+        Args:
+            project_id: 项目 ID
+
+        Returns:
+            bool: 是否有未提交更改
+        """
+        try:
+            project_path = self.get_project_path(project_id)
+            repo = Repo(project_path)
+            return repo.is_dirty() or len(repo.untracked_files) > 0
+        except Exception as e:
+            logger.error(f"Failed to check uncommitted changes: {e}")
+            return True  # 出错时保守返回 True
 
 
 # 全局 Git 管理器实例

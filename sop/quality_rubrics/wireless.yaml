@@ -1,0 +1,7 @@
+# Quality Rubric: Wireless
+# v1.2 §5.1 — 备用，当前用 binary gate
+# 此文件为占位符，待后续定义具体评分标准
+
+rubric_name: wireless
+status: placeholder
+note: "当前使用 binary gate 判定，quality rubric 评分尚未启用"

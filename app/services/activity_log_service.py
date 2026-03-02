@@ -294,5 +294,14 @@ class ActivityLogService:
             "successful_activities": successful_activities,
             "failed_activities": failed_activities,
             "error_activities": error_activities,
-            "action_counts": {action: count for action, count in action_counts}
+            "action_counts": {action: count for action, count in action_counts},
+            # 前端兼容字段
+            "by_action": {action: count for action, count in action_counts},
+            "by_status": {
+                "success": successful_activities,
+                "failure": failed_activities,
+                "error": error_activities
+            },
+            "by_user": {},
+            "recent_activities": []
         }

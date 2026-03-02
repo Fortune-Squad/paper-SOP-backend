@@ -78,7 +78,7 @@ def main():
     print("=" * 60)
     print()
 
-    # Check if database exists
+    # 若为 SQLite 且文件不存在则先初始化
     from app.db.database import DATABASE_PATH
     db_path = Path(DATABASE_PATH) if DATABASE_PATH else None
     if db_path and not db_path.exists():

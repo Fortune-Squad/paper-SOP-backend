@@ -12,12 +12,14 @@ from app.models.project import Project
 from app.models.artifact import ArtifactStatus
 from app.models.hil import QuestionType, TicketPriority
 from app.prompts.step1_prompts import (
-    render_step_1_1_prompt,
+    render_step_1_1a_prompt,
+    render_step_1_1b_hunt_prompt,
+    render_step_1_1c_prompt,
     render_step_1_2_prompt,
     render_step_1_3_prompt,
     render_step_1_4_prompt,
     render_step_1_5_prompt,
-    render_step_1_1b_prompt,
+    render_step_1_3b_prompt,
     render_step_1_2b_prompt
 )
 
@@ -96,38 +98,32 @@ def validate_url_format(url: str) -> tuple[bool, str]:
     return True, "Valid"
 
 
-class Step1_1_DeepResearch(BaseStep):
-    """Step 1.1: Broad Deep Research (Gemini)"""
+class Step1_1a_SearchPlan(BaseStep):
+    """Step 1.1a: Search Plan (ChatGPT)"""
 
     @property
     def step_id(self) -> str:
-        return "step_1_1"
+        return "step_1_1a"
 
     @property
     def step_name(self) -> str:
-        return "Broad Deep Research"
+        return "Search Plan"
 
     @property
     def output_doc_type(self) -> DocumentType:
-        return DocumentType.DEEP_RESEARCH_SUMMARY
+        return DocumentType.SEARCH_PLAN
 
     @property
     def ai_model(self) -> str:
         from app.config import settings
-        return settings.gemini_model
+        return settings.openai_model
 
     async def execute(self) -> Document:
         """
-        执行 Step 1.1: Broad Deep Research
-
-        SOP v4.0 要求生成 4 个文档：
-        1. Deep Research Summary (主文档)
-        2. Search Query Log
-        3. Literature Matrix
-        4. Verified References (可选)
+        执行 Step 1.1a: Search Plan (ChatGPT)
 
         Returns:
-            Document: Deep Research Summary 文档
+            Document: Search Plan 文档
 
         Raises:
             StepExecutionError: 执行失败时抛出
@@ -151,7 +147,7 @@ class Step1_1_DeepResearch(BaseStep):
             )
 
             # 渲染 Prompt
-            prompt = render_step_1_1_prompt(
+            prompt = render_step_1_1a_prompt(
                 topic=self.project.config.topic,
                 target_venue=self.project.config.target_venue,
                 research_type=self.project.config.research_type.value,
@@ -159,15 +155,13 @@ class Step1_1_DeepResearch(BaseStep):
                 venue_taste_content=venue_taste_content if venue_taste_content else ""
             )
 
-            # 调用 Gemini（情报官角色）
-            logger.info("Calling Gemini to generate Deep Research Summary (Agentic Wrapper DISABLED for complete output)")
-            system_prompt = "You are a Chief Intelligence Officer and top-journal editor. Your role is deep research, literature analysis, and identifying research gaps."
-            content = await self.gemini_client.chat(
+            # 调用 ChatGPT（Research Strategist 角色）
+            logger.info("Calling ChatGPT to generate Search Plan")
+            system_prompt = "You are a Research Strategist. Your role is to decompose research topics into structured search plans for systematic literature review."
+            content = await self.chatgpt_client.chat(
                 prompt=prompt,
                 context=[],
-                system_prompt=system_prompt,
-                max_tokens=16384,  # 增加输出空间以支持长篇输出
-                wrapper_mode="disabled"  # 禁用 Agentic Wrapper 以获取完整输出
+                system_prompt=system_prompt
             )
 
             # 记录 AI 对话
@@ -181,6 +175,115 @@ class Step1_1_DeepResearch(BaseStep):
                     "step_name": self.step_name,
                     "intake_card_included": True,
                     "venue_taste_included": bool(venue_taste_content),
+                }
+            )
+
+            if not content:
+                raise StepExecutionError("ChatGPT returned empty response")
+
+            # 创建文档
+            document = self.create_document(
+                doc_type=DocumentType.SEARCH_PLAN,
+                content=content,
+                status=DocumentStatus.COMPLETED,
+                inputs=[DocumentType.PROJECT_INTAKE_CARD.value, DocumentType.VENUE_TASTE_NOTES.value],
+                outputs=[DocumentType.RAW_INTEL_LOG.value]
+            )
+
+            # v6.0: Save to Artifact Store (dual-write mode)
+            await self.save_to_artifact_store(
+                content=content,
+                doc_type=DocumentType.SEARCH_PLAN,
+                status=ArtifactStatus.FROZEN
+            )
+            logger.info(f"Saved to Artifact Store: {self.step_id}")
+
+            # 保存并提交 (backward compatibility)
+            await self.save_and_commit(
+                document=document,
+                commit_message=f"{self.step_id}: Generate Search Plan"
+            )
+
+            logger.info(f"Completed {self.step_name}")
+            return document
+
+        except Exception as e:
+            logger.error(f"Failed to execute {self.step_name}: {e}")
+            raise StepExecutionError(f"Step 1.1a failed: {e}")
+
+
+class Step1_1b_Hunt(BaseStep):
+    """Step 1.1b: The Hunt (Gemini)"""
+
+    @property
+    def step_id(self) -> str:
+        return "step_1_1b"
+
+    @property
+    def step_name(self) -> str:
+        return "The Hunt"
+
+    @property
+    def output_doc_type(self) -> DocumentType:
+        return DocumentType.RAW_INTEL_LOG
+
+    @property
+    def ai_model(self) -> str:
+        from app.config import settings
+        return settings.gemini_model
+
+    async def execute(self) -> Document:
+        """
+        执行 Step 1.1b: The Hunt (Gemini)
+
+        Returns:
+            Document: Raw Intel Log 文档
+
+        Raises:
+            StepExecutionError: 执行失败时抛出
+        """
+        try:
+            logger.info(f"Starting {self.step_name} for project {self.project.project_id}")
+
+            # 获取 Search Plan (with fallback)
+            search_plan_content = await self.load_context_with_fallback(
+                step_id="step_1_1a",
+                doc_type=DocumentType.SEARCH_PLAN
+            )
+
+            if not search_plan_content:
+                raise StepExecutionError("Search Plan not found. Please run Step 1.1a first.")
+
+            # 渲染 Prompt
+            rigor_profile = getattr(self.project.config, 'rigor_profile', None) or getattr(self.project, 'rigor_profile', 'top_journal') or 'top_journal'
+            prompt = render_step_1_1b_hunt_prompt(
+                search_plan_content=search_plan_content,
+                topic=self.project.config.topic,
+                target_venue=self.project.config.target_venue,
+                rigor_profile=rigor_profile
+            )
+
+            # 调用 Gemini（情报官角色）
+            logger.info("Calling Gemini to execute The Hunt (Agentic Wrapper: disabled)")
+            system_prompt = "You are an Intelligence Officer (The Hunter). Your role is systematic evidence gathering — find, catalog, and verify research papers."
+            content = await self.gemini_client.chat(
+                prompt=prompt,
+                context=[],
+                system_prompt=system_prompt,
+                max_tokens=32768,
+                wrapper_mode="disabled"  # disabled: output is >5000 tokens structured table, wrapper causes truncation
+            )
+
+            # 记录 AI 对话
+            self.log_ai_conversation(
+                model=self.ai_model,
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+                context=[],
+                response=content,
+                metadata={
+                    "step_name": self.step_name,
+                    "search_plan_included": True,
                     "agentic_wrapper_mode": "disabled",
                     "max_tokens": 16384
                 }
@@ -189,397 +292,143 @@ class Step1_1_DeepResearch(BaseStep):
             if not content:
                 raise StepExecutionError("Gemini returned empty response")
 
-            # 1. 创建并保存主文档 (Deep Research Summary)
-            logger.info("Creating Deep Research Summary document")
-            main_document = self.create_document(
-                doc_type=DocumentType.DEEP_RESEARCH_SUMMARY,
+            # 创建文档
+            document = self.create_document(
+                doc_type=DocumentType.RAW_INTEL_LOG,
                 content=content,
                 status=DocumentStatus.COMPLETED,
-                inputs=[DocumentType.PROJECT_INTAKE_CARD.value, DocumentType.VENUE_TASTE_NOTES.value],
-                outputs=[
-                    DocumentType.SEARCH_QUERY_LOG.value,
-                    DocumentType.LITERATURE_MATRIX.value,
-                    DocumentType.VERIFIED_REFERENCES.value,
-                    DocumentType.SELECTED_TOPIC.value
-                ]
+                inputs=[DocumentType.SEARCH_PLAN.value],
+                outputs=[DocumentType.LITERATURE_MATRIX_V7.value]
             )
 
             # v6.0: Save to Artifact Store (dual-write mode)
             await self.save_to_artifact_store(
                 content=content,
-                doc_type=DocumentType.DEEP_RESEARCH_SUMMARY,
+                doc_type=DocumentType.RAW_INTEL_LOG,
                 status=ArtifactStatus.FROZEN
             )
-            logger.info(f"Saved to Artifact Store: {self.step_id} - Deep Research Summary")
+            logger.info(f"Saved to Artifact Store: {self.step_id}")
 
-            # Save to file system (backward compatibility)
+            # 保存并提交 (backward compatibility)
             await self.save_and_commit(
-                document=main_document,
-                commit_message=f"{self.step_id}: Generate Deep Research Summary"
+                document=document,
+                commit_message=f"{self.step_id}: Execute The Hunt"
             )
 
-            # HIL Integration: Check if multiple research directions found
-            logger.info("Checking for multiple research directions (HIL integration)")
-            research_directions = self._extract_research_directions(content)
-
-            if len(research_directions) > 1:
-                logger.info(f"Found {len(research_directions)} research directions - requesting human input")
-
-                # Create HIL ticket for direction selection
-                ticket = await self.request_human_input(
-                    question=f"发现 {len(research_directions)} 个潜在研究方向，请选择优先探索的方向",
-                    question_type=QuestionType.DECISION,
-                    context={
-                        "directions": research_directions,
-                        "topic": self.project.config.topic,
-                        "venue": self.project.config.target_venue
-                    },
-                    options=research_directions,
-                    priority=TicketPriority.HIGH,
-                    blocking=False,  # Non-blocking - can proceed without answer
-                    timeout_hours=48.0
-                )
-
-                logger.info(f"Created HIL ticket {ticket.ticket_id} for research direction selection")
-                logger.info("Step will continue without waiting for answer (non-blocking)")
-
-            # 2. 提取并保存 Search Query Log
-            logger.info("Extracting Search Query Log")
-            search_log_content = self._extract_search_log(content)
-            if search_log_content:
-                search_log_doc = self.create_document(
-                    doc_type=DocumentType.SEARCH_QUERY_LOG,
-                    content=search_log_content,
-                    status=DocumentStatus.COMPLETED,
-                    inputs=[DocumentType.DEEP_RESEARCH_SUMMARY.value],
-                    outputs=[DocumentType.LITERATURE_MATRIX.value]
-                )
-
-                # v6.0: Save to Artifact Store (dual-write mode)
-                await self.save_to_artifact_store(
-                    content=search_log_content,
-                    doc_type=DocumentType.SEARCH_QUERY_LOG,
-                    status=ArtifactStatus.FROZEN
-                )
-                logger.info(f"Saved to Artifact Store: {self.step_id} - Search Query Log")
-
-                # Save to file system (backward compatibility)
-                await self.save_and_commit(
-                    document=search_log_doc,
-                    commit_message=f"{self.step_id}: Extract Search Query Log"
-                )
-                logger.info("Search Query Log created successfully")
-            else:
-                logger.warning("Could not extract Search Query Log from response")
-
-            # 3. 提取并保存 Literature Matrix
-            logger.info("Extracting Literature Matrix")
-            lit_matrix_content = self._extract_literature_matrix(content)
-            if lit_matrix_content:
-                lit_matrix_doc = self.create_document(
-                    doc_type=DocumentType.LITERATURE_MATRIX,
-                    content=lit_matrix_content,
-                    status=DocumentStatus.COMPLETED,
-                    inputs=[DocumentType.DEEP_RESEARCH_SUMMARY.value],
-                    outputs=[DocumentType.REFERENCE_QA_REPORT.value]
-                )
-
-                # v6.0: Save to Artifact Store (dual-write mode)
-                await self.save_to_artifact_store(
-                    content=lit_matrix_content,
-                    doc_type=DocumentType.LITERATURE_MATRIX,
-                    status=ArtifactStatus.FROZEN
-                )
-                logger.info(f"Saved to Artifact Store: {self.step_id} - Literature Matrix")
-
-                # Save to file system (backward compatibility)
-                await self.save_and_commit(
-                    document=lit_matrix_doc,
-                    commit_message=f"{self.step_id}: Extract Literature Matrix"
-                )
-                logger.info("Literature Matrix created successfully")
-            else:
-                logger.warning("Could not extract Literature Matrix from response")
-
-            # 4. 提取并保存 Verified References
-            logger.info("Extracting Verified References")
-            refs_content = self._extract_references(content)
-            if refs_content:
-                refs_doc = self.create_document(
-                    doc_type=DocumentType.VERIFIED_REFERENCES,
-                    content=refs_content,
-                    status=DocumentStatus.COMPLETED,
-                    inputs=[DocumentType.LITERATURE_MATRIX.value],
-                    outputs=[]
-                )
-
-                # v6.0: Save to Artifact Store (dual-write mode)
-                await self.save_to_artifact_store(
-                    content=refs_content,
-                    doc_type=DocumentType.VERIFIED_REFERENCES,
-                    status=ArtifactStatus.FROZEN
-                )
-                logger.info(f"Saved to Artifact Store: {self.step_id} - Verified References")
-
-                # Save to file system (backward compatibility)
-                await self.save_and_commit(
-                    document=refs_doc,
-                    commit_message=f"{self.step_id}: Extract Verified References"
-                )
-                logger.info("Verified References created successfully")
-            else:
-                logger.warning("Could not extract Verified References from response")
-
-            logger.info(f"Completed {self.step_name} - Generated 4 documents")
-            return main_document
+            logger.info(f"Completed {self.step_name}")
+            return document
 
         except Exception as e:
             logger.error(f"Failed to execute {self.step_name}: {e}")
-            raise StepExecutionError(f"Step 1.1 failed: {e}")
+            raise StepExecutionError(f"Step 1.1b failed: {e}")
 
-    def _extract_search_log(self, content: str) -> Optional[str]:
+
+class Step1_1c_Synthesis(BaseStep):
+    """Step 1.1c: Literature Synthesis (ChatGPT)"""
+
+    @property
+    def step_id(self) -> str:
+        return "step_1_1c"
+
+    @property
+    def step_name(self) -> str:
+        return "Literature Synthesis"
+
+    @property
+    def output_doc_type(self) -> DocumentType:
+        return DocumentType.LITERATURE_MATRIX_V7
+
+    @property
+    def ai_model(self) -> str:
+        from app.config import settings
+        return settings.openai_model
+
+    async def execute(self) -> Document:
         """
-        从 Gemini 响应中提取 Search Query Log
+        执行 Step 1.1c: Literature Synthesis (ChatGPT)
 
-        查找 "## 1) Actions Taken" 部分
-        """
-        try:
-            # 查找 Actions Taken 部分
-            pattern = r'##\s*1\)\s*Actions\s+Taken\s*\n(.*?)(?=\n##|\Z)'
-            match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
+        Returns:
+            Document: Literature Matrix v7 文档
 
-            if match:
-                actions_content = match.group(1).strip()
-
-                # 创建完整的 Search Query Log 文档
-                doc_content = f"""---
-doc_type: "00_Search_Query_Log"
-version: "1.0"
-status: "completed"
-created_by: "Gemini"
-inputs:
-  - "00_Deep_Research_Summary.md"
-outputs:
-  - "00_Literature_Matrix.md"
----
-
-# Search Query Log
-
-## Actions Taken
-
-{actions_content}
-
-## Extraction Note
-This document was automatically extracted from the Deep Research Summary (Step 1.1).
-"""
-                return doc_content
-
-            logger.warning("Could not find 'Actions Taken' section in response")
-            return None
-
-        except Exception as e:
-            logger.error(f"Error extracting search log: {e}")
-            return None
-
-    def _extract_literature_matrix(self, content: str) -> Optional[str]:
-        """
-        从 Gemini 响应中提取 Literature Matrix
-
-        查找 "## A) Literature Matrix" 部分
+        Raises:
+            StepExecutionError: 执行失败时抛出
         """
         try:
-            # 查找 Literature Matrix 部分
-            pattern = r'##\s*A\)\s*Literature\s+Matrix\s*\n(.*?)(?=\n##\s*B\)|\Z)'
-            match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
+            logger.info(f"Starting {self.step_name} for project {self.project.project_id}")
 
-            if match:
-                matrix_content = match.group(1).strip()
+            # 获取 Raw Intel Log (with fallback)
+            raw_intel_content = await self.load_context_with_fallback(
+                step_id="step_1_1b",
+                doc_type=DocumentType.RAW_INTEL_LOG
+            )
 
-                # 创建完整的 Literature Matrix 文档
-                doc_content = f"""---
-doc_type: "00_Literature_Matrix"
-version: "1.0"
-status: "completed"
-created_by: "Gemini"
-inputs:
-  - "00_Deep_Research_Summary.md"
-outputs:
-  - "00_Reference_QA_Report.md"
----
+            if not raw_intel_content:
+                raise StepExecutionError("Raw Intel Log not found. Please run Step 1.1b first.")
 
-# Literature Matrix
+            # 渲染 Prompt
+            rigor_profile = getattr(self.project.config, 'rigor_profile', None) or getattr(self.project, 'rigor_profile', 'top_journal') or 'top_journal'
+            prompt = render_step_1_1c_prompt(
+                raw_intel_content=raw_intel_content,
+                topic=self.project.config.topic,
+                target_venue=self.project.config.target_venue,
+                rigor_profile=rigor_profile
+            )
 
-{matrix_content}
+            # 调用 ChatGPT（PI 角色）
+            logger.info("Calling ChatGPT to generate Literature Synthesis")
+            system_prompt = "You are the PI (Principal Investigator). Your role is to synthesize raw intelligence into structured analysis, identify research gaps, and propose directions."
+            content = await self.chatgpt_client.chat(
+                prompt=prompt,
+                context=[],
+                system_prompt=system_prompt,
+                max_tokens=16384  # Large output: Literature Matrix table (25+ rows × 10 cols) + Schools + Gaps + Directions
+            )
 
-## Extraction Note
-This document was automatically extracted from the Deep Research Summary (Step 1.1).
-"""
-                return doc_content
+            # 记录 AI 对话
+            self.log_ai_conversation(
+                model=self.ai_model,
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+                context=[],
+                response=content,
+                metadata={
+                    "step_name": self.step_name,
+                    "raw_intel_included": True,
+                }
+            )
 
-            logger.warning("Could not find 'Literature Matrix' section in response")
-            return None
+            if not content:
+                raise StepExecutionError("ChatGPT returned empty response")
 
-        except Exception as e:
-            logger.error(f"Error extracting literature matrix: {e}")
-            return None
+            # 创建文档
+            document = self.create_document(
+                doc_type=DocumentType.LITERATURE_MATRIX_V7,
+                content=content,
+                status=DocumentStatus.COMPLETED,
+                inputs=[DocumentType.RAW_INTEL_LOG.value],
+                outputs=[DocumentType.SELECTED_TOPIC.value]
+            )
 
-    def _extract_references(self, content: str) -> Optional[str]:
-        """
-        从 Gemini 响应中提取 Verified References
+            # v6.0: Save to Artifact Store (dual-write mode)
+            await self.save_to_artifact_store(
+                content=content,
+                doc_type=DocumentType.LITERATURE_MATRIX_V7,
+                status=ArtifactStatus.FROZEN
+            )
+            logger.info(f"Saved to Artifact Store: {self.step_id}")
 
-        从 Literature Matrix 中提取所有 DOI/URL
-        """
-        try:
-            # 查找 Literature Matrix 表格
-            pattern = r'##\s*A\)\s*Literature\s+Matrix\s*\n(.*?)(?=\n##\s*B\)|\Z)'
-            match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
+            # 保存并提交 (backward compatibility)
+            await self.save_and_commit(
+                document=document,
+                commit_message=f"{self.step_id}: Generate Literature Matrix (v7)"
+            )
 
-            if not match:
-                return None
-
-            matrix_content = match.group(1)
-
-            # 提取所有 DOI 和 URL
-            doi_pattern = r'10\.\d{4,}/[^\s\|\)]+|https?://[^\s\|\)]+|\[https?://[^\]]+\]\([^\)]+\)'
-            raw_urls = re.findall(doi_pattern, matrix_content)
-
-            if not raw_urls:
-                logger.warning("No DOIs or URLs found in Literature Matrix")
-                return None
-
-            # 清理URL格式
-            cleaned_urls = []
-            invalid_urls = []
-
-            for raw_url in raw_urls:
-                if raw_url == "UNKNOWN":
-                    continue
-
-                # 清理URL
-                clean_url = extract_clean_url(raw_url)
-
-                # 验证URL格式
-                is_valid, error_msg = validate_url_format(clean_url)
-
-                if is_valid:
-                    cleaned_urls.append(clean_url)
-                else:
-                    logger.warning(f"Invalid URL format: {clean_url} - {error_msg}")
-                    invalid_urls.append((raw_url, error_msg))
-
-            # 去重
-            unique_urls = list(dict.fromkeys(cleaned_urls))
-
-            if not unique_urls:
-                logger.warning("No valid URLs after cleaning and validation")
-                return None
-
-            # 创建 Verified References 文档
-            refs_list = "\n".join([f"- {url}" for url in unique_urls])
-
-            # 添加无效URL报告（如果有）
-            invalid_report = ""
-            if invalid_urls:
-                invalid_report = "\n\n## Invalid URLs (需要修复)\n\n"
-                invalid_report += "\n".join([f"- {url}: {error}" for url, error in invalid_urls[:5]])  # 只显示前5个
-
-            doc_content = f"""---
-doc_type: "00_Verified_References"
-version: "1.0"
-status: "completed"
-created_by: "System"
-inputs:
-  - "00_Literature_Matrix.md"
-outputs: []
----
-
-# Verified References
-
-## Total References: {len(unique_urls)}
-
-## DOI/URL List
-
-{refs_list}
-
-## Statistics
-- Total references extracted: {len(raw_urls)}
-- Valid DOIs/URLs: {len(unique_urls)}
-- Invalid/Unknown references: {len(invalid_urls)}
-{invalid_report}
-
-## Extraction Note
-This document was automatically extracted from the Literature Matrix (Step 1.1).
-References should be validated using the Reference QA tool (Step 1.1b).
-"""
-            return doc_content
+            logger.info(f"Completed {self.step_name}")
+            return document
 
         except Exception as e:
-            logger.error(f"Error extracting references: {e}")
-            return None
-
-    def _extract_research_directions(self, content: str) -> list[str]:
-        """
-        从 Deep Research Summary 中提取研究方向
-
-        查找可能的研究方向关键词和列表
-        """
-        try:
-            directions = []
-
-            # 查找 "Research Directions" 或类似的部分
-            patterns = [
-                r'##\s*(?:Research\s+)?Directions?\s*\n(.*?)(?=\n##|\Z)',
-                r'##\s*Potential\s+Topics?\s*\n(.*?)(?=\n##|\Z)',
-                r'##\s*Candidate\s+Directions?\s*\n(.*?)(?=\n##|\Z)',
-            ]
-
-            for pattern in patterns:
-                match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
-                if match:
-                    section_content = match.group(1).strip()
-
-                    # 提取列表项
-                    list_items = re.findall(r'[-*]\s*(.+?)(?=\n[-*]|\n\n|\Z)', section_content, re.DOTALL)
-
-                    for item in list_items:
-                        # 清理并提取方向名称（取第一行或前50个字符）
-                        direction = item.strip().split('\n')[0][:100]
-                        if direction and len(direction) > 10:  # 至少10个字符
-                            directions.append(direction)
-
-                    if directions:
-                        break
-
-            # 如果没有找到明确的方向列表，尝试从 Literature Matrix 中提取主题
-            if not directions:
-                # 查找 Literature Matrix 部分
-                matrix_pattern = r'##\s*(?:2\)\s*)?Literature\s+Matrix\s*\n(.*?)(?=\n##|\Z)'
-                matrix_match = re.search(matrix_pattern, content, re.DOTALL | re.IGNORECASE)
-
-                if matrix_match:
-                    matrix_content = matrix_match.group(1).strip()
-
-                    # 提取表格中的主题列（假设格式为 | Topic | ... |）
-                    topic_matches = re.findall(r'\|\s*([^|]+?)\s*\|', matrix_content)
-
-                    # 过滤掉表头和分隔符
-                    for topic in topic_matches:
-                        topic = topic.strip()
-                        if (topic and
-                            topic.lower() not in ['topic', 'paper', 'method', 'venue', 'year', 'url', '---', '--'] and
-                            len(topic) > 10 and
-                            not topic.startswith('-')):
-                            directions.append(topic[:100])
-
-            # 去重并限制数量
-            unique_directions = list(dict.fromkeys(directions))[:5]  # 最多5个方向
-
-            logger.info(f"Extracted {len(unique_directions)} research directions")
-            return unique_directions
-
-        except Exception as e:
-            logger.error(f"Error extracting research directions: {e}")
-            return []
+            logger.error(f"Failed to execute {self.step_name}: {e}")
+            raise StepExecutionError(f"Step 1.1c failed: {e}")
 
 
 class Step1_2_TopicDecision(BaseStep):
@@ -615,14 +464,20 @@ class Step1_2_TopicDecision(BaseStep):
         try:
             logger.info(f"Starting {self.step_name} for project {self.project.project_id}")
 
-            # 获取 Deep Research Summary (with fallback)
-            deep_research_content = await self.load_context_with_fallback(
-                step_id="step_1_1",
-                doc_type=DocumentType.DEEP_RESEARCH_SUMMARY
+            # 获取 Literature Matrix v7 (with fallback)
+            literature_matrix_content = await self.load_context_with_fallback(
+                step_id="step_1_1c",
+                doc_type=DocumentType.LITERATURE_MATRIX_V7
             )
 
-            if not deep_research_content:
-                raise StepExecutionError("Deep Research Summary not found. Please run Step 1.1 first.")
+            if not literature_matrix_content:
+                raise StepExecutionError("Literature Matrix not found. Please run Step 1.1 first.")
+
+            # 获取 Venue Taste Notes (v7: S2 输入)
+            venue_taste_content = await self.load_context_with_fallback(
+                step_id="step_0_2",
+                doc_type=DocumentType.VENUE_TASTE_NOTES
+            )
 
             # 获取 Project Intake Card 以提取核心关键词 (with fallback)
             intake_card_content = await self.load_context_with_fallback(
@@ -643,10 +498,33 @@ class Step1_2_TopicDecision(BaseStep):
 
             # 渲染 Prompt
             prompt = render_step_1_2_prompt(
-                deep_research_content=deep_research_content,
+                literature_matrix_content=literature_matrix_content,
                 target_venue=self.project.config.target_venue,
-                core_keywords=core_keywords
+                core_keywords=core_keywords,
+                venue_taste_content=venue_taste_content if venue_taste_content else ""
             )
+
+            # v7.1: Inject AGENTS.md + MEMORY.md context
+            project_context = self.get_project_context_injection()
+            if project_context:
+                prompt += project_context
+
+            # v7.1: Append core terms addendum
+            from app.prompts.step1_prompts import TOPIC_DECISION_CORE_TERMS_ADDENDUM
+            prompt += TOPIC_DECISION_CORE_TERMS_ADDENDUM
+
+            # v7.1: Load Idea-Lab candidates (optional)
+            try:
+                idea_lab_content = await self.load_context_with_fallback(
+                    step_id="step_1_3b_idea_lab",
+                    doc_type=DocumentType.IDEA_LAB_CANDIDATES
+                )
+                if idea_lab_content:
+                    from app.prompts.step1_prompts import TOPIC_DECISION_IDEALAB_ADDENDUM
+                    prompt += TOPIC_DECISION_IDEALAB_ADDENDUM.format(idea_lab_content=idea_lab_content)
+                    logger.info("Idea-Lab candidates injected into Topic Decision prompt")
+            except Exception as idea_err:
+                logger.debug(f"Idea-Lab candidates not available (optional): {idea_err}")
 
             # 调用 ChatGPT（PI/架构师角色）
             logger.info("Calling ChatGPT to generate Topic Decision")
@@ -666,7 +544,8 @@ class Step1_2_TopicDecision(BaseStep):
                 response=content,
                 metadata={
                     "step_name": self.step_name,
-                    "deep_research_included": True,
+                    "literature_matrix_included": True,
+                    "venue_taste_included": bool(venue_taste_content),
                     "core_keywords_included": bool(core_keywords)
                 }
             )
@@ -679,7 +558,7 @@ class Step1_2_TopicDecision(BaseStep):
                 doc_type=DocumentType.SELECTED_TOPIC,
                 content=content,
                 status=DocumentStatus.COMPLETED,
-                inputs=[DocumentType.DEEP_RESEARCH_SUMMARY.value],
+                inputs=[DocumentType.LITERATURE_MATRIX_V7.value, DocumentType.VENUE_TASTE_NOTES.value],
                 outputs=[DocumentType.KILLER_PRIOR_CHECK.value]
             )
 
@@ -697,12 +576,85 @@ class Step1_2_TopicDecision(BaseStep):
                 commit_message=f"{self.step_id}: Generate Selected Topic and Draft Claims"
             )
 
+            # 提取并保存 Draft Claims 子文档（v7 必须产物）
+            logger.info("Extracting Draft Claims from Selected Topic")
+            draft_claims_content = self._extract_draft_claims(content)
+            if draft_claims_content:
+                draft_claims_doc = self.create_document(
+                    doc_type=DocumentType.DRAFT_CLAIMS,
+                    content=draft_claims_content,
+                    status=DocumentStatus.COMPLETED,
+                    inputs=[DocumentType.SELECTED_TOPIC.value],
+                    outputs=[DocumentType.KILLER_PRIOR_CHECK.value]
+                )
+
+                # v6.0: Save to Artifact Store (dual-write mode)
+                await self.save_to_artifact_store(
+                    content=draft_claims_content,
+                    doc_type=DocumentType.DRAFT_CLAIMS,
+                    status=ArtifactStatus.FROZEN
+                )
+                logger.info(f"Saved to Artifact Store: {self.step_id} - Draft Claims")
+
+                await self.save_and_commit(
+                    document=draft_claims_doc,
+                    commit_message=f"{self.step_id}: Extract Draft Claims"
+                )
+                logger.info("Draft Claims document created successfully")
+            else:
+                logger.warning("Could not extract Draft Claims from response - full content will be used as fallback")
+
             logger.info(f"Completed {self.step_name}")
             return document
 
         except Exception as e:
             logger.error(f"Failed to execute {self.step_name}: {e}")
             raise StepExecutionError(f"Step 1.2 failed: {e}")
+
+    def _extract_draft_claims(self, content: str) -> Optional[str]:
+        """
+        从 Selected Topic 响应中提取 Draft Claims 部分
+
+        查找包含 claims 和 non-claims 的段落，支持多种标题格式
+        """
+        import re
+
+        # 尝试匹配常见的 Draft Claims 段落标题
+        patterns = [
+            r'(##\s*(?:4\)|Draft Claim|Claim Set|Claims and Non[-\s]?Claims).*?)(?=\n##\s*(?:5\)|Minimal|Figure|Table)|$)',
+            r'(##\s*Draft Claims.*?)(?=\n##\s*|$)',
+            r'(###?\s*(?:Claims|Draft Claims).*?###?\s*(?:Non[-\s]?Claims|What We Do NOT Claim).*?)(?=\n##\s*|$)',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
+            if match:
+                extracted = match.group(1).strip()
+                if len(extracted) > 100:  # 确保提取到有意义的内容
+                    logger.info(f"Extracted Draft Claims ({len(extracted)} chars)")
+                    return extracted
+
+        # 回退：查找包含 "claim" 关键词的连续段落
+        lines = content.split('\n')
+        claim_start = None
+        claim_end = None
+        for i, line in enumerate(lines):
+            lower = line.lower()
+            if claim_start is None and ('draft claim' in lower or 'claim set' in lower or ('claims' in lower and 'non' not in lower and line.startswith('#'))):
+                claim_start = i
+            elif claim_start is not None and line.startswith('## ') and 'claim' not in lower and 'non-claim' not in lower and 'nonclaim' not in lower:
+                claim_end = i
+                break
+
+        if claim_start is not None:
+            claim_end = claim_end or len(lines)
+            extracted = '\n'.join(lines[claim_start:claim_end]).strip()
+            if len(extracted) > 100:
+                logger.info(f"Extracted Draft Claims via fallback ({len(extracted)} chars)")
+                return extracted
+
+        logger.warning("Could not extract Draft Claims section from content")
+        return None
 
 
 class Step1_3_KillerPriorCheck(BaseStep):
@@ -747,9 +699,21 @@ class Step1_3_KillerPriorCheck(BaseStep):
             if not selected_topic_content:
                 raise StepExecutionError("Selected Topic not found. Please run Step 1.2 first.")
 
+            # 获取 Draft Claims（v7: S3 必须输入）
+            draft_claims_content = await self.load_context_with_fallback(
+                step_id="step_1_2",
+                doc_type=DocumentType.DRAFT_CLAIMS
+            )
+
+            if not draft_claims_content:
+                raise StepExecutionError("Draft Claims not found. Please run Step 1.2 first (it should produce Draft Claims).")
+
             # 渲染 Prompt
+            rigor_profile = getattr(self.project.config, 'rigor_profile', None) or getattr(self.project, 'rigor_profile', 'top_journal') or 'top_journal'
             prompt = render_step_1_3_prompt(
-                selected_topic_content=selected_topic_content
+                selected_topic_content=selected_topic_content,
+                draft_claims_content=draft_claims_content,
+                rigor_profile=rigor_profile
             )
 
             # 调用 Gemini（情报官/审稿人角色）
@@ -759,8 +723,8 @@ class Step1_3_KillerPriorCheck(BaseStep):
                 prompt=prompt,
                 context=[],
                 system_prompt=system_prompt,
-                wrapper_mode="disabled",  # Disabled: Killer Prior Check has specific structure and very long output
-                max_tokens=16384  # Large output: Plan + Actions + Evidence + Direct Collision + Partial Overlap + Changes + Verdict
+                wrapper_mode="disabled",  # disabled: output is >5000 tokens (15+ papers + collision map table + verdict), wrapper causes truncation
+                max_tokens=32768  # Large output: Direct Collision + Partial Overlap + Collision Map + Changes + Verdict
             )
 
             # 记录 AI 对话
@@ -773,6 +737,7 @@ class Step1_3_KillerPriorCheck(BaseStep):
                 metadata={
                     "step_name": self.step_name,
                     "selected_topic_included": True,
+                    "draft_claims_included": True,
                     "mandatory_check": True
                 }
             )
@@ -1055,8 +1020,8 @@ class Step1_5_FigureFirstStory(BaseStep):
                 prompt=prompt,
                 context=[],
                 system_prompt=system_prompt,
-                max_tokens=16384,  # Increased for two complete documents
-                wrapper_mode="disabled"  # Disabled: Step generates 2 documents with specific formats (YAML + structured sections)
+                max_tokens=32768,  # Large output: two complete documents (Figure-First Story + Title/Abstract)
+                wrapper_mode="disabled"  # disabled: output is >5000 tokens (2 docs with YAML + sections), wrapper causes truncation
             )
 
             # 记录 AI 对话
@@ -1122,12 +1087,12 @@ class Step1_5_FigureFirstStory(BaseStep):
             raise StepExecutionError(f"Step 1.5 failed: {e}")
 
 
-class Step1_1b_ReferenceQA(BaseStep):
-    """Step 1.1b: Reference QA (Gemini) - v4.0 NEW"""
+class Step1_3b_ReferenceQA(BaseStep):
+    """Step 1.3b: Reference QA (Gemini) - renamed from Step1_1b"""
 
     @property
     def step_id(self) -> str:
-        return "step_1_1b"
+        return "step_1_3b"
 
     @property
     def step_name(self) -> str:
@@ -1156,18 +1121,25 @@ class Step1_1b_ReferenceQA(BaseStep):
         try:
             logger.info(f"Starting {self.step_name} for project {self.project.project_id}")
 
-            # 获取 Deep Research Summary（包含 Literature Matrix）(with fallback)
-            deep_research_content = await self.load_context_with_fallback(
-                step_id="step_1_1",
-                doc_type=DocumentType.DEEP_RESEARCH_SUMMARY
+            # 获取 Literature Matrix v7 (with fallback)
+            literature_matrix_content = await self.load_context_with_fallback(
+                step_id="step_1_1c",
+                doc_type=DocumentType.LITERATURE_MATRIX_V7
             )
 
-            if not deep_research_content:
-                raise StepExecutionError("Deep Research Summary not found. Please run Step 1.1 first.")
+            if not literature_matrix_content:
+                raise StepExecutionError("Literature Matrix not found. Please run Step 1.1 first.")
+
+            # 获取 Killer Prior Check (v7: S3b 输入)
+            killer_prior_content = await self.load_context_with_fallback(
+                step_id="step_1_3",
+                doc_type=DocumentType.KILLER_PRIOR_CHECK
+            )
 
             # 渲染 Prompt
-            prompt = render_step_1_1b_prompt(
-                literature_matrix_content=deep_research_content
+            prompt = render_step_1_3b_prompt(
+                literature_matrix_content=literature_matrix_content,
+                killer_prior_content=killer_prior_content if killer_prior_content else ""
             )
 
             # 调用 Gemini（研究图书管理员角色）
@@ -1177,8 +1149,8 @@ class Step1_1b_ReferenceQA(BaseStep):
                 prompt=prompt,
                 context=[],
                 system_prompt=system_prompt,
-                wrapper_mode="disabled",  # Disabled: Step has specific output format (YAML + sections)
-                max_tokens=16384  # Increase token limit for complete report
+                wrapper_mode="disabled",  # disabled: output is >5000 tokens (enhanced matrix + QA report), wrapper causes truncation
+                max_tokens=32768  # Large output: enhanced Literature Matrix + Reference Quality Report
             )
 
             # 记录 AI 对话
@@ -1191,6 +1163,7 @@ class Step1_1b_ReferenceQA(BaseStep):
                 metadata={
                     "step_name": self.step_name,
                     "literature_matrix_included": True,
+                    "killer_prior_included": bool(killer_prior_content),
                     "v4_new_step": True
                 }
             )
@@ -1203,7 +1176,7 @@ class Step1_1b_ReferenceQA(BaseStep):
                 doc_type=DocumentType.REFERENCE_QA_REPORT,
                 content=content,
                 status=DocumentStatus.COMPLETED,
-                inputs=[DocumentType.DEEP_RESEARCH_SUMMARY.value],
+                inputs=[DocumentType.LITERATURE_MATRIX_V7.value, DocumentType.KILLER_PRIOR_CHECK.value],
                 outputs=[DocumentType.SELECTED_TOPIC.value]
             )
 
@@ -1221,6 +1194,33 @@ class Step1_1b_ReferenceQA(BaseStep):
                 commit_message=f"{self.step_id}: Generate Reference QA Report"
             )
 
+            # 提取并保存 Verified References（v7: S3b 产物之二）
+            logger.info("Extracting Verified References from QA Report + Literature Matrix")
+            refs_content = self._extract_verified_references(content, literature_matrix_content)
+            if refs_content:
+                refs_doc = self.create_document(
+                    doc_type=DocumentType.VERIFIED_REFERENCES,
+                    content=refs_content,
+                    status=DocumentStatus.COMPLETED,
+                    inputs=[DocumentType.REFERENCE_QA_REPORT.value, DocumentType.LITERATURE_MATRIX_V7.value],
+                    outputs=[]
+                )
+
+                await self.save_to_artifact_store(
+                    content=refs_content,
+                    doc_type=DocumentType.VERIFIED_REFERENCES,
+                    status=ArtifactStatus.FROZEN
+                )
+                logger.info(f"Saved to Artifact Store: {self.step_id} - Verified References")
+
+                await self.save_and_commit(
+                    document=refs_doc,
+                    commit_message=f"{self.step_id}: Extract Verified References"
+                )
+                logger.info("Verified References created successfully")
+            else:
+                logger.warning("Could not extract Verified References from QA Report")
+
             logger.info(f"Completed {self.step_name}")
             return document
 
@@ -1228,9 +1228,105 @@ class Step1_1b_ReferenceQA(BaseStep):
             logger.error(f"Failed to execute {self.step_name}: {e}")
             raise StepExecutionError(f"Step 1.1b failed: {e}")
 
+    def _extract_verified_references(self, qa_content: str, matrix_content: str) -> Optional[str]:
+        """
+        从 Reference QA Report 的 A) Literature Matrix (Enhanced) 表格中提取引用，
+        生成 BibTeX 格式的 01_Verified_References.bib
+
+        v7 SOP: S3b 产物之二 — 01_Verified_References.bib
+        """
+        import re
+
+        try:
+            # 1. 如果 QA Report 中仍有 bibtex 代码块，直接使用
+            bibtex_blocks = re.findall(r'```bibtex\s*\n(.*?)```', qa_content, re.DOTALL)
+            if bibtex_blocks:
+                bibtex_content = "\n\n".join(block.strip() for block in bibtex_blocks)
+                entry_count = len(re.findall(r'@\w+\{', bibtex_content))
+                logger.info(f"Extracted {entry_count} BibTeX entries from QA Report bibtex block")
+                return self._wrap_bib_content(bibtex_content, entry_count)
+
+            # 2. 从 section A 表格解析并生成 BibTeX
+            # 匹配 markdown 表格行: | # | Title | Venue/Year | DOI/Link | Status |
+            table_rows = re.findall(
+                r'\|\s*(\d+)\s*\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]*)\|',
+                qa_content
+            )
+
+            if not table_rows:
+                # Fallback: 从 Literature Matrix 原始内容解析
+                table_rows = re.findall(
+                    r'\|\s*(\d+)\s*\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]*)\|',
+                    matrix_content
+                )
+
+            if not table_rows:
+                logger.warning("No table rows found in QA Report or Literature Matrix")
+                return None
+
+            bibtex_entries = []
+            for row_num, title, venue_year, doi_link, status in table_rows:
+                title = title.strip()
+                venue_year = venue_year.strip()
+                doi_link = doi_link.strip()
+
+                # 提取 URL from markdown link syntax [text](url)
+                url_match = re.search(r'\[.*?\]\((https?://[^\)]+)\)', doi_link)
+                url = url_match.group(1) if url_match else ""
+                if not url:
+                    # 尝试直接匹配 URL
+                    url_match = re.search(r'(https?://\S+)', doi_link)
+                    url = url_match.group(1).rstrip('.,;)') if url_match else ""
+
+                # 解析 venue 和 year
+                year_match = re.search(r'(\d{4})', venue_year)
+                year = year_match.group(1) if year_match else "UNKNOWN"
+                venue = re.sub(r',?\s*\d{4}.*$', '', venue_year).strip()
+
+                # 生成 citation key
+                first_word = re.sub(r'[^a-zA-Z]', '', title.split()[0].lower()) if title else "ref"
+                key = f"{first_word}{year}_{row_num}"
+
+                entry = f"""@article{{{key},
+  title={{{title}}},
+  journal={{{venue}}},
+  year={{{year}}},
+  url={{{url}}}
+}}"""
+                bibtex_entries.append(entry)
+
+            bibtex_content = "\n\n".join(bibtex_entries)
+            entry_count = len(bibtex_entries)
+            logger.info(f"Generated {entry_count} BibTeX entries from table rows")
+            return self._wrap_bib_content(bibtex_content, entry_count)
+
+        except Exception as e:
+            logger.error(f"Error extracting verified references: {e}")
+            return None
+
+    def _wrap_bib_content(self, bibtex_content: str, entry_count: int) -> str:
+        """包装 BibTeX 内容为完整的 .bib 文档"""
+        return f"""---
+doc_type: "01_Verified_References"
+version: "1.0"
+status: "frozen"
+created_by: "System"
+inputs:
+  - "01_Reference_QA_Report.md"
+  - "01_C_Literature_Matrix.md"
+outputs: []
+gate_relevance: "Gate 1.6"
+---
+
+% Verified References — generated from Reference QA Report (Step S3b)
+% Total BibTeX entries: {entry_count}
+
+{bibtex_content}
+"""
+
 
 class Step1_2b_TopicAlignmentCheck(BaseStep):
-    """Step 1.2b: Topic Alignment Check (ChatGPT) - v4.0 NEW"""
+    """Step 1.2b: Topic Alignment Check (ChatGPT) - DEPRECATED: merged into Gate 1 per SOP v7"""
 
     @property
     def step_id(self) -> str:

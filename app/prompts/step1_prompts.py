@@ -4,10 +4,12 @@ Step 1 阶段的所有提示词模板
 """
 
 
-def render_step_1_1_prompt(topic: str, target_venue: str, research_type: str,
-                           intake_card_content: str, venue_taste_content: str = "") -> str:
+# v7 SOP 6.3 [S1a] — Search Plan (ChatGPT)
+def render_step_1_1a_prompt(topic: str, target_venue: str, research_type: str,
+                            intake_card_content: str, venue_taste_content: str = "") -> str:
     """
-    渲染 Step 1.1 Prompt: Broad Deep Research (Gemini)
+    渲染 Step 1.1a Prompt: Search Plan (ChatGPT)
+    v7 SOP 6.3 — Research Strategist role
 
     Args:
         topic: 研究主题
@@ -19,16 +21,16 @@ def render_step_1_1_prompt(topic: str, target_venue: str, research_type: str,
     Returns:
         str: 渲染后的 prompt
     """
-    prompt = f"""You are my Chief Intelligence Officer + top-journal editor.
+    prompt = f"""You are a Research Strategist(The Planner).
 
-**CRITICAL: AGENTIC-FIRST / EVIDENCE-FIRST RULES (SOP v4.0):**
-1) 先列 Plan（最多 6 步），再执行检索/核验，再输出产物；不要先写结论。
-2) 每个关键判断必须给 Evidence（DOI/出版社页面/IEEE Xplore/ArXiv 链接之一）。
-3) 不允许占位符 DOI（如 10.1109/xxx.2024.1）；若找不到就标记 UNKNOWN 并降级结论。
-4) 输出必须结构化、短句、可被脚本解析；禁止把整篇正文包进 ```markdown``` 代码块。
-5) 最后必须给：Risk list（>=5）+ What to verify（>=5）+ Confidence（0-1）。
+## Task
+Create a structured search plan for deep literature research on the topic below.
 
-Deep research for topic: {topic} (Target venue: {target_venue}; Research type: {research_type})
+## Input
+- Topic: {topic}
+- Target Venue: {target_venue}
+- Research Type: {research_type}
+- Project Intake Card is attached below for full context.
 
 ## Context from Project Intake Card:
 {intake_card_content}
@@ -41,339 +43,477 @@ Deep research for topic: {topic} (Target venue: {target_venue}; Research type: {
 
 """
 
-    prompt += """Output (MUST be structured, no long essay):
+    prompt += f"""## Actions
 
-## 0) Plan
-List 3-6 steps you will take to complete this deep research:
-- Step 1: [action]
-- Step 2: [action]
-- ...
+### 1. Decompose the Topic into 3 Dimensions
+- **Method Gaps**: what techniques are missing or underexplored?
+- **Application Constraints**: what practical limitations exist?
+- **SOTA Baselines**: what are the current best approaches?
 
-## 1) Actions Taken
-Document what you actually did:
-- Searched: [keywords/databases]
-- Reviewed: [number] papers
-- Validated: [evidence sources]
+### 2. Generate Search Questions
+For each dimension, generate 3 specific "Search Questions" (answerable by finding papers).
 
-## 2) Evidence Validation
-For each key claim or finding, provide:
-- Claim: [statement]
-- Evidence: [DOI or URL - NO placeholders]
-- Status: VERIFIED / UNKNOWN
+### 3. Generate Keyword Combinations
+For each dimension, generate 5 "Keyword Combinations" (for Google Scholar / IEEE Xplore / arXiv).
 
-## A) Literature Matrix
-(>=30 papers preferred; prioritize last 5 years, but include classics if needed)
+### 4. Negative Keywords
+Identify "Negative Keywords" to exclude (Survey, Review, Tutorial — unless explicitly needed).
 
-Create a table with columns:
-- Venue/Year | Title | Core Problem | Method | Key Assumptions | Data/Setup | Main Results | Limitations (gap candidates) | Open Questions | Link/DOI
+### 5. Define coverage criteria
+Define coverage criteria: what would a "sufficient" search look like? (min papers per dimension)
 
-**IMPORTANT**: Every row MUST have a valid DOI or URL. If DOI is unavailable, mark as UNKNOWN and note in limitations.
+## Output Format
+File: `01_A_Search_Plan.md`
 
-## B) Landscape Map
-Cluster the field into 4–6 clusters. For each cluster: 5–8 representative papers + 1-line narrative.
-
-## C) Gap-to-Opportunity
-List 10 candidate gaps. Each gap must explicitly point to specific papers/limitations in the matrix with DOI/URL evidence.
-
-## D) Candidate Directions
-Propose 3 candidate directions:
-For each: 1-line contribution, minimal viable validation, biggest risk.
-
-## E) Risk List
-List >=5 risks identified during research:
-- Risk 1: [description]
-- Risk 2: [description]
-- ...
-
-## F) Verification Checklist
-List >=5 items that need verification:
-- [ ] Item 1: [what needs to be verified]
-- [ ] Item 2: [what needs to be verified]
-- ...
-
-## G) Confidence Score
-Overall confidence in this research: [0.0-1.0]
-- Literature coverage: [0.0-1.0]
-- Evidence quality: [0.0-1.0]
-- Gap identification: [0.0-1.0]
-
-## YAML Front-Matter Requirements
-
-Your output MUST begin with the following YAML front-matter (fill in the bracketed values):
-
+Begin with YAML front-matter:
 ```yaml
 ---
-doc_type: "00_Deep_Research_Summary"
+doc_type: SearchPlan
 version: "0.1"
-status: "draft"
-created_by: "Gemini"
+status: draft
+created_by: ChatGPT
 target_venue: "{target_venue}"
-topic: "[One-line summary of the research topic]"
-inputs:
-  - "00_Project_Intake_Card.md"
-  - "00_Venue_Taste_Notes.md"
-outputs:
-  - "00_Deep_Research_Summary.md"
-gate_relevance: "Gate 1"
+topic: "[One-line summary]"
+inputs: ["artifacts/00_intake/00_Project_Intake_Card.md"]
+gate_relevance: Gate1
 ---
 ```
 
-After the YAML front-matter, provide the complete document content following the structure above (sections 0-G).
-
-Return as a comprehensive markdown document (00_Deep_Research_Summary.md).
-
-**REMINDER**: Do NOT wrap the entire output in ```markdown``` code blocks. Output should be direct markdown content.
+Then provide all sections above as structured markdown.
 """
 
     return prompt
 
 
-def render_step_1_2_prompt(deep_research_content: str, target_venue: str, core_keywords: str = "") -> str:
+# v7 SOP 6.4 [S1b] — The Hunt (Gemini)
+def render_step_1_1b_hunt_prompt(search_plan_content: str, topic: str, target_venue: str, rigor_profile: str = "top_journal") -> str:
+    """
+    渲染 Step 1.1b Prompt: The Hunt (Gemini)
+    v7 SOP 6.4 — Intelligence Officer / The Hunter role
+
+    Args:
+        search_plan_content: Search Plan 内容
+        topic: 研究主题
+        target_venue: 目标期刊
+        rigor_profile: 研究强度档位 (top_journal / fast_track)
+
+    Returns:
+        str: 渲染后的 prompt
+    """
+    MIN_PAPERS = 30 if rigor_profile == "top_journal" else 15
+
+    prompt = f"""You are an Intelligence Officer (The Hunter).
+
+## Task
+Execute the search plan below. Find and catalog relevant papers systematically.Execute Search & Extract Evidence according to the Search Plan.
+
+## Input
+- Topic: {topic}
+- Target Venue: {target_venue}
+- Search Plan is attached below.
+
+## Search Plan:
+{search_plan_content}
+
+## CONSTRAINT:
+- Focus on papers from last 5 years; prioritize last 3 years.
+- DO NOT SUMMARIZE or write narrative. Extract structured data only.
+- Each paper must have: DOI or arXiv link or publisher page URL. If none found, mark [UNVERIFIED].
+
+## Actions
+
+For EACH search query from the search plan:
+1) Locate top 3-5 papers per query.
+2) Extract per paper: 
+   - [Title] | [Year] | [Venue]
+   - [Claimed Solution / Core Method]
+   - [Admitted Limitation / Gap]
+   - [DOI or Link]
+3) After all queries: list any unexpected findings or emerging trends.
+
+## Format
+structured table, one row per paper. Minimum {MIN_PAPERS} papers total.
+(Top-Journal: MIN_PAPERS=30, Fast-Track: MIN_PAPERS=15)
+
+## Output
+File: `01_B_Raw_Intel_Log.md`
+
+Begin with YAML front-matter:
+```yaml
+---
+doc_type: RawIntelLog
+version: "0.1"
+status: draft
+created_by: Gemini
+target_venue: "{target_venue}"
+topic: "[One-line summary]"
+gate_relevance: Gate1
+---
+```
+
+Then provide a structured table of all papers found, organized by search query.
+Be evidence-first — every paper needs a DOI or link.
+
+IMPORTANT: You MUST include at least {MIN_PAPERS} papers AND end with a section listing unexpected findings or emerging trends. Do not stop early.
+"""
+
+    return prompt
+
+
+# v7 SOP 6.5 [S1c] — Literature Synthesis (ChatGPT)
+def render_step_1_1c_prompt(raw_intel_content: str, topic: str, target_venue: str, rigor_profile: str = "top_journal") -> str:
+    """
+    渲染 Step 1.1c Prompt: Literature Synthesis (ChatGPT)
+    v7 SOP 6.5 — PI role
+
+    Args:
+        raw_intel_content: Raw Intel Log 内容
+        topic: 研究主题
+        target_venue: 目标期刊
+        rigor_profile: 研究强度档位 (top_journal / fast_track)
+
+    Returns:
+        str: 渲染后的 prompt
+    """
+    # Count papers in Raw Intel Log to set explicit expectation
+    import re
+    raw_lines = raw_intel_content.split('\n')
+    paper_count = 0
+    for line in raw_lines:
+        s = line.strip()
+        if s.startswith('|') and '---' not in s and 'Title' not in s.split('|')[1] if len(s.split('|')) > 1 else True:
+            paper_count += 1
+    if paper_count == 0:
+        paper_count = len(re.findall(r'^\|', raw_intel_content, re.MULTILINE)) - 2  # subtract header + separator
+
+    prompt = f"""You are the PI.
+
+## Task
+Synthesize the raw intelligence into a structured literature matrix and identify research opportunities.
+
+## Input
+- Topic: {topic}
+- Target Venue: {target_venue}
+- Raw Intel Log ({paper_count} papers) is attached below.
+
+## Raw Intel Log:
+{raw_intel_content}
+
+## Actions
+
+### 1. Filter
+List papers to EXCLUDE (only clearly off-topic or pure review/survey papers). State exclusion reason for each.
+Be conservative — when in doubt, keep the paper.
+
+### 2. Literature Matrix
+Build a numbered table with these columns for EVERY paper that was NOT excluded in Step 1:
+
+| # | Venue/Year | Title | Core Problem | Method | Limitations (gap candidates) | DOI/Link |
+|---|------------|-------|--------------|--------|------------------------------|----------|
+| 1 | [Venue, Year] | [Title] | [Core problem] | [Method] | [Limitations] | [DOI] |
+
+Keep each cell concise (1-2 sentences max). You MUST produce one row per included paper. Number rows sequentially starting from 1.
+The Raw Intel Log contains {paper_count} papers. After excluding a few, you should have approximately {paper_count - 5} to {paper_count} rows.
+
+### 3. Schools of Thought
+Cluster remaining papers into 4-6 "Schools of Thought". For each cluster: representative papers + 1-line narrative.
+
+### 4. Empty Spaces
+Identify "Empty Spaces" — gaps no one has solved. Each gap must point to specific paper limitations.
+
+### 5. Candidate Directions
+Propose 3 candidate research directions. For each:
+- 1-line contribution statement
+- Minimal viable validation approach
+- Biggest risk
+
+## Output Format
+File: `01_C_Literature_Matrix.md`
+
+Begin with YAML front-matter:
+```yaml
+---
+doc_type: LiteratureMatrix
+version: "0.1"
+status: draft
+created_by: ChatGPT
+target_venue: "{target_venue}"
+topic: "[One-line summary]"
+inputs: ["artifacts/01_research/01_B_Raw_Intel_Log.md"]
+gate_relevance: Gate1
+---
+```
+
+Then provide all sections above as structured markdown. Be evidence-first — every claim needs a DOI or link.
+
+CRITICAL: Do NOT stop early. You must process ALL {paper_count} papers from the Raw Intel Log. The Literature Matrix table must have approximately {paper_count - 5}+ rows.
+"""
+
+    return prompt
+
+
+# ============================================================
+# LEGACY: Step 1.1 Prompt (SOP v4.0) — 保留用于对比
+# ============================================================
+# def render_step_1_1_prompt_v4_legacy(topic, target_venue, research_type,
+#                            intake_card_content, venue_taste_content=""):
+#     prompt = f"""You are my Chief Intelligence Officer + top-journal editor.
+#
+#     **CRITICAL: AGENTIC-FIRST / EVIDENCE-FIRST RULES (SOP v4.0):**
+#     1) 先列 Plan（最多 6 步），再执行检索/核验，再输出产物；不要先写结论。
+#     2) 每个关键判断必须给 Evidence（DOI/出版社页面/IEEE Xplore/ArXiv 链接之一）。
+#     3) 不允许占位符 DOI（如 10.1109/xxx.2024.1）；若找不到就标记 UNKNOWN 并降级结论。
+#     4) 输出必须结构化、短句、可被脚本解析；禁止把整篇正文包进 ```markdown``` 代码块。
+#     5) 最后必须给：Risk list（>=5）+ What to verify（>=5）+ Confidence（0-1）。
+#
+#     Deep research for topic: {topic} (Target venue: {target_venue}; Research type: {research_type})
+#
+#     ## Context from Project Intake Card:
+#     {intake_card_content}
+#
+#     Output (MUST be structured, no long essay):
+#     ## 0) Plan ... ## 1) Actions Taken ... ## 2) Evidence Validation ...
+#     ## A) Literature Matrix ... ## B) Landscape Map ... ## C) Gap-to-Opportunity ...
+#     ## D) Candidate Directions ... ## E) Risk List ... ## F) Verification Checklist ...
+#     ## G) Confidence Score ...
+#     """
+#     return prompt
+
+
+# v7 SOP 6.6 [S2] Topic Decision + Draft Claims — ChatGPT
+def render_step_1_2_prompt(literature_matrix_content: str, target_venue: str,
+                           core_keywords: str = "", venue_taste_content: str = "") -> str:
     """
     渲染 Step 1.2 Prompt: Topic Decision & Draft Claim Set (ChatGPT)
+    v7 SOP 6.6 — PI role, 6 specific actions
 
     Args:
-        deep_research_content: Deep Research Summary 内容
+        literature_matrix_content: Literature Matrix v7 内容
         target_venue: 目标期刊
         core_keywords: 核心关键词列表（可选）
+        venue_taste_content: Venue Taste Notes 内容（可选）
 
     Returns:
         str: 渲染后的 prompt
     """
-    # 如果提供了核心关键词，添加到 prompt 中
-    keywords_instruction = ""
+    keywords_section = ""
     if core_keywords:
-        keywords_instruction = f"""
+        keywords_section = f"""
 
-## CRITICAL: Core Keywords Requirement (Gate 1.25)
-
-The selected topic MUST incorporate at least 3-5 of the following core keywords from the Project Intake Card:
-
+## Core Keywords (from Intake Card):
 {core_keywords}
 
-**IMPORTANT**: The topic title should naturally include these keywords to ensure alignment with the project's North-Star Question and research scope. This is required to pass Gate 1.25 (Topic Alignment Check).
+The selected topic MUST incorporate at least 3-5 of these core keywords.
 """
 
-    prompt = f"""You are the PI. I attach the Deep Research Summary (literature matrix + venue notes).
+    venue_taste_section = ""
+    if venue_taste_content:
+        venue_taste_section = f"""
 
-Target venue: {target_venue}
-{keywords_instruction}
+## Venue Taste Notes:
+{venue_taste_content}
+"""
 
-## Deep Research Summary:
-{deep_research_content}
+    prompt = f"""You are the PI.
 
-## Tasks:
+## Task
+Turn intelligence into a decision — narrow to Top-1 topic with backup.
 
-1) Extract <=10 "Gap Statements" (each must cite specific paper(s) from the matrix).
+## Input
+- Literature Matrix is attached below.
+- Target Venue: {target_venue}
+{keywords_section}
+## Literature Matrix:
+{literature_matrix_content}
+{venue_taste_section}
+## Actions (complete all six)
 
-2) Propose 3 candidate topics. Score each 1–5 on:
-   - Novelty
-   - Feasibility
-   - Venue-fit
-   - Interpretability
-   - Risk
+### 1. Gap Statements
+Extract <=10 "Gap Statements" (each must cite specific paper(s) from the matrix by their row number or DOI).
 
-   **IMPORTANT**: Each candidate topic title should incorporate 3-5 core keywords from the list above.
+### 2. Candidate Topics
+Propose 3 candidate topics. Score each 1-5 on: Novelty, Feasibility, Venue-fit, Interpretability, Risk.
 
-3) Select Top-1 and Top-2 backup.
+### 3. Selection
+Select Top-1 and Top-2 backup. Justify selection.
 
-4) For Top-1: write a Draft Claim Set:
-   - 6 claims (what we assert)
-   - 6 non-claims (what we explicitly do NOT claim)
+### 4. Draft Claim Set
+For Top-1, write a Draft Claim Set:
+- >=6 claims (what we assert)
+- >=6 non-claims (what we explicitly do NOT claim)
 
-5) Provide a minimal figure/table set (<=4) that would prove the main story.
+### 5. Minimal Figure/Table Set
+Provide a minimal figure/table set (<=4). For each figure:
+- What it proves
+- Which reviewer attack it defends against
 
-## YAML Front-Matter Requirements
+### 6. Topic Alignment Check (自检)
+- Does Top-1 directly answer the North-Star Question from Intake?
+- Does it contain all 3-5 core keywords from Intake?
+- Is everything outside scope written into non-claims?
 
-Your output MUST begin with the following YAML front-matter (fill in the bracketed values):
+## Output Format
+Files: `01_Selected_Topic.md`, `01_Draft_Claims.md`
 
+Begin with YAML front-matter:
 ```yaml
 ---
-doc_type: "01_Selected_Topic"
+doc_type: SelectedTopic
 version: "0.1"
-status: "draft"
-created_by: "ChatGPT"
+status: draft
+created_by: ChatGPT
 target_venue: "{target_venue}"
-topic: "[One-line summary of the selected topic]"
-inputs:
-  - "00_Deep_Research_Summary.md"
-outputs:
-  - "01_Selected_Topic.md"
-gate_relevance: "Gate 1"
+topic: "[One-line summary]"
+gate_relevance: Gate1
 ---
 ```
 
-After the YAML front-matter, provide the complete document content including:
-- Gap statements
-- Candidate topics with scores
-- Selected topic (Top-1 and backup)
-- Draft claims and non-claims
-- Minimal figure/table set
+Then provide all 6 sections above.
 """
 
     return prompt
 
 
-def render_step_1_3_prompt(selected_topic_content: str) -> str:
+# ============================================================
+# LEGACY: Step 1.2 Prompt (SOP v4.0) — 保留用于对比
+# ============================================================
+# def render_step_1_2_prompt_v4_legacy(literature_matrix_content, target_venue,
+#                            core_keywords="", venue_taste_content=""):
+#     keywords_instruction = ""
+#     if core_keywords:
+#         keywords_instruction = f"""
+#     ## CRITICAL: Core Keywords Requirement (Gate 1.25)
+#     The selected topic MUST incorporate at least 3-5 of the following core keywords:
+#     {core_keywords}
+#     """
+#     prompt = f"""You are the PI. I attach the Literature Matrix and venue notes.
+#     Target venue: {target_venue}
+#     {keywords_instruction}
+#     ## Literature Matrix: {literature_matrix_content}
+#     ## Tasks:
+#     1) Extract <=10 "Gap Statements" ...
+#     2) Propose 3 candidate topics. Score each 1-5 ...
+#     3) Select Top-1 and Top-2 backup ...
+#     4) For Top-1: write a Draft Claim Set (6 claims + 6 non-claims) ...
+#     5) Provide a minimal figure/table set (<=4) ...
+#     6) TOPIC ALIGNMENT CHECK ...
+#     """
+#     return prompt
+
+
+# v7 SOP 6.7 [S3] Killer Prior Check — Gemini (MANDATORY)
+# Agentic Wrapper is handled by wrapper_mode parameter, NOT inlined in prompt.
+def render_step_1_3_prompt(selected_topic_content: str, draft_claims_content: str, rigor_profile: str = "top_journal") -> str:
     """
     渲染 Step 1.3 Prompt: Killer Prior Check (Gemini) - MANDATORY
-    Enhanced with Agentic Wrapper (v4.0)
+    v7 SOP 6.7 — Ruthless Reviewer + Research Librarian role
 
     Args:
-        selected_topic_content: Selected Topic 内容（包含 draft claims）
+        selected_topic_content: Selected Topic 内容
+        draft_claims_content: Draft Claims 内容（v7 必须输入）
+        rigor_profile: 研究强度档位 (top_journal / fast_track)
 
     Returns:
         str: 渲染后的 prompt
     """
-    prompt = f"""KILLER PRIOR CHECK (mandatory). You are a ruthless reviewer + research librarian.
+    MIN_SIMILAR = 15 if rigor_profile == "top_journal" else 10
+    recency = "last 12-18 months" if rigor_profile == "top_journal" else "last 6-12 months"
 
-**CRITICAL: AGENTIC-FIRST / EVIDENCE-FIRST RULES (SOP v4.0):**
-1) 先列 Plan（最多 6 步），再执行检索/核验，再输出产物；不要先写结论。
-2) 每个关键判断必须给 Evidence（DOI/出版社页面/IEEE Xplore/ArXiv 链接之一）。
-3) 不允许占位符 DOI（如 10.1109/xxx.2024.1）；若找不到就标记 UNKNOWN 并降级结论。
-4) 输出必须结构化、短句、可被脚本解析；禁止把整篇正文包进 ```markdown``` 代码块。
-5) 最后必须给：Risk list（>=5）+ What to verify（>=5）+ Confidence（0-1）。
+    prompt = f"""You are a Ruthless Reviewer + Research Librarian.
 
-## Given Selected Topic + Draft Claims:
+## Task
+KILL THIS PROJECT if a direct prior exists. This is a mandatory gate.
+
+## Input
+- Selected Topic is attached below.
+- Draft Claims are attached below.
+
+## Selected Topic:
 {selected_topic_content}
 
-## Goal:
-Find the most similar prior work (>=15 items; include very recent papers, preprints, conference abstracts if relevant).
+## Draft Claims:
+{draft_claims_content}
 
-For each prior work:
-- What overlaps with our claims (map to claim numbers)
+## Goal
+Find the most similar prior work. Minimum {MIN_SIMILAR} items.
+Include: published papers, preprints (arXiv), conference abstracts, recent workshop papers.
+Prioritize {recency}.
+
+## Actions
+For each prior work found:
+- What overlaps with our claims (map to claim numbers: C1, C2, ...)
 - What is truly new in our approach (if any)
 - How we must differentiate (claims, method, evaluation, narrative)
 
-## Output (MUST be structured, no long essay):
+## Output Sections
 
-## 0) Plan
-List 3-6 steps you will take to complete this Killer Prior Check:
-- Step 1: [action - e.g., extract core claims from selected topic]
-- Step 2: [action - e.g., search for papers with similar claims]
-- Step 3: [action - e.g., validate DOI/URLs for each prior work]
-- Step 4: [action - e.g., map overlaps to claim numbers]
-- Step 5: [action - e.g., assess differentiation strategy]
-- Step 6: [action - e.g., determine PASS/FAIL verdict]
+### 1. "Direct Collision" List
+Works that already cover >=80% of our claim set. For each:
+- Title, Venue/Year, DOI
+- Overlapping Claims
+- Our Differentiator
 
-## 1) Actions Taken
-Document what you actually did:
-- Searched: [keywords/databases used for prior work search]
-- Reviewed: [number] papers/preprints/abstracts
-- Validated: [number] DOI/URLs verified
-- Mapped: [number] overlaps to claim numbers
+### 2. "Partial Overlap" List
+Works that cover some claims. Same format as above.
 
-## 2) Evidence Table
-For each prior work found (>=15 items), provide:
+### 3. Collision Map
+Markdown table with ALL prior works mapped to claims. Use this exact format:
 
-| Prior Work | Venue/Year | Overlap with Our Claims | DOI/URL | Status |
-|------------|------------|-------------------------|---------|--------|
-| [Title 1] | [Venue/Year] | Claims [1,2,3]: [brief description] | [DOI or URL] | VERIFIED / UNKNOWN |
-| [Title 2] | [Venue/Year] | Claims [4]: [brief description] | [DOI or URL] | VERIFIED / UNKNOWN |
-| ... | ... | ... | ... | ... |
+| # | Prior Work | DOI | Overlapping Claims | Our Differentiator |
+|---|------------|-----|--------------------|--------------------|
+| 1 | [Title, Venue/Year] | [DOI or link] | [C1, C2, ...] | [How we differ] |
 
-**IMPORTANT**: Every row MUST have a valid DOI or URL. If DOI is unavailable, mark as UNKNOWN and note in recommendations.
+Every paper from sections 1 and 2 must appear in this table. Number rows sequentially starting from 1.
 
-## 3) Deliverables
+### 4. Recommended Changes (<=5)
+- Revise which claims / change narrative identity / add or swap key figure / change baseline
 
-### A) "Direct Collision" List
-Works that already cover our main claim set (>=3 claims overlap):
+### 5. VERDICT: PASS or FAIL
+- PASS = no single prior work fully covers our claims + our differentiator is crisp and defensible.
+- FAIL = a prior work already claims the same core contributions.
 
-For each work:
-- **Title**: [title]
-- **Venue/Year**: [venue/year]
-- **DOI/URL**: [link - NO placeholders]
-- **Claims Covered**: [list claim numbers, e.g., Claims 1, 2, 3]
-- **Overlap Description**: [1-2 sentences on what they already claim]
-- **Our Differentiation**: [what is still new in our approach, if any]
+## Output Format
+File: `01_Killer_Prior_Check.md`
 
-### B) "Partial Overlap" List
-Works that cover some claims (1-2 claims overlap):
-
-For each work:
-- **Title**: [title]
-- **Venue/Year**: [venue/year]
-- **DOI/URL**: [link - NO placeholders]
-- **Claims Covered**: [list claim numbers]
-- **Overlap Description**: [1-2 sentences]
-- **How We Differ**: [method/evaluation/narrative differences]
-
-### C) Recommended Changes (<=5)
-Based on the prior work analysis, recommend specific changes:
-1. [Revise claim X to emphasize Y]
-2. [Change narrative identity from A to B]
-3. [Add or swap key figure(s) to show Z]
-4. [Change baseline comparisons to include W]
-5. [Adjust evaluation metrics to highlight V]
-
-### D) Verdict: PASS / FAIL
-
-**Definition:**
-- **PASS** = no single prior work fully covers our claims + our differentiator is crisp and defensible.
-- **FAIL** = a prior work already claims the same core contributions.
-
-**Verdict**: [PASS / FAIL]
-
-**Justification**: [2-3 sentences explaining the verdict based on evidence]
-
-## 4) Risks
-List >=5 risks identified during Killer Prior Check:
-- Risk 1: [e.g., Recent preprint (arXiv:XXXX) may publish before us with similar claims]
-- Risk 2: [e.g., Claim 3 has weak differentiation from [Paper Title]]
-- Risk 3: [e.g., Missing DOI for 3 key prior works - need manual verification]
-- Risk 4: [e.g., Venue X published similar work in last 6 months - may reject as incremental]
-- Risk 5: [e.g., Our differentiation relies on dataset Y which may not be available]
-- ...
-
-## 5) Verification Checklist
-List >=5 items that need verification before proceeding:
-- [ ] Item 1: [e.g., Verify DOI for [Paper Title] - currently marked UNKNOWN]
-- [ ] Item 2: [e.g., Check if [Recent Preprint] has been published since search]
-- [ ] Item 3: [e.g., Confirm our dataset Y is accessible and usable]
-- [ ] Item 4: [e.g., Validate that Claim 3 differentiation is defensible with reviewers]
-- [ ] Item 5: [e.g., Search for very recent papers (last 3 months) in target venue]
-- ...
-
-## 6) Confidence Score
-Overall confidence in this Killer Prior Check: [0.0-1.0]
-- Prior work coverage: [0.0-1.0] (how thoroughly we searched)
-- Evidence quality: [0.0-1.0] (% of DOI/URLs verified)
-- Differentiation clarity: [0.0-1.0] (how crisp our differentiator is)
-- Verdict confidence: [0.0-1.0] (confidence in PASS/FAIL decision)
-
-## YAML Front-Matter Requirements
-
-Your output MUST begin with the following YAML front-matter (fill in the bracketed values):
-
+Begin with YAML front-matter:
 ```yaml
 ---
-doc_type: "01_Killer_Prior_Check"
+doc_type: KillerPriorCheck
 version: "0.1"
-status: "draft"
-created_by: "Gemini"
-target_venue: "[Extract from selected topic]"
-topic: "[One-line summary from selected topic]"
-inputs:
-  - "01_Selected_Topic.md"
-outputs:
-  - "01_Killer_Prior_Check.md"
-gate_relevance: "Gate 1.5"
+status: draft
+created_by: Gemini
+target_venue: "[from selected topic]"
+topic: "[One-line summary]"
+gate_relevance: Gate1.5
 ---
 ```
 
-After the YAML front-matter, provide the complete document content following the structure above (sections 0-6).
-
-Return as 01_Killer_Prior_Check.md (with citations/links).
-
-**REMINDER**: Do NOT wrap the entire output in ```markdown``` code blocks. Output should be direct markdown content.
+Then provide all 5 sections above. Every prior work MUST have a DOI or link — no placeholders.
 """
 
     return prompt
 
 
+# ============================================================
+# LEGACY: Step 1.3 Prompt (SOP v4.0) — 保留用于对比
+# ============================================================
+# def render_step_1_3_prompt_v4_legacy(selected_topic_content, draft_claims_content):
+#     prompt = f"""KILLER PRIOR CHECK (mandatory). You are a ruthless reviewer + research librarian.
+#     **CRITICAL: AGENTIC-FIRST / EVIDENCE-FIRST RULES (SOP v4.0):**
+#     1) 先列 Plan ... 2) Evidence ... 3) 不允许占位符 DOI ... 4) 结构化 ... 5) Risk list + Confidence
+#     ## Given Selected Topic: {selected_topic_content}
+#     ## Draft Claims: {draft_claims_content}
+#     ## Goal: Find >=15 similar works
+#     ## Output: sections 0-6 (Plan, Actions, Evidence Table, Deliverables, Risks, Verification, Confidence)
+#     """
+#     return prompt
+
+
+# v7 SOP 6.8 [S4] Claims Freeze — ChatGPT
 def render_step_1_4_prompt(killer_prior_content: str, target_venue: str) -> str:
     """
     渲染 Step 1.4 Prompt: Claims Freeze (ChatGPT)
+    v7 SOP 6.8 — PI role, 3 specific actions
 
     Args:
         killer_prior_content: Killer Prior Check 内容
@@ -382,99 +522,82 @@ def render_step_1_4_prompt(killer_prior_content: str, target_venue: str) -> str:
     Returns:
         str: 渲染后的 prompt
     """
-    prompt = f"""You are the PI. We have a Killer Prior Check result.
+    prompt = f"""You are the PI.
 
-Target venue: {target_venue}
+## Task
+Lock claims & scope after de-risking via Killer Prior.
+
+## Input
+- `01_Killer_Prior_Check.md` (must be PASSED) — attached below.
 
 ## Killer Prior Check Result:
 {killer_prior_content}
 
-## Tasks:
+## Actions (complete all three)
 
-1) Update and FREEZE the claim set:
-   - >=6 claims
-   - >=6 non-claims
+### 1. Update and FREEZE the Claim Set
+Incorporate Killer Prior recommended changes, then freeze:
+- >=6 claims (final, frozen)
+- >=6 non-claims (final, frozen)
 
-2) Define a Minimal Verification Set (<=6 units).
-   For each unit:
-   - inputs
-   - outputs
-   - PASS/FAIL criteria
+### 2. Define Minimal Verification Set (MVS, <=6 units)
+For each unit:
+- Inputs (what goes in)
+- Outputs (what comes out)
+- PASS/FAIL criteria (binary, no ambiguity)
 
-3) Define Pivot Rules:
-   If the key phenomenon is weak or absent, what is the closest alternative paper identity that still fits {target_venue}?
+### 3. Define Pivot Rules
+- If the key phenomenon is weak or absent, what is the closest alternative paper identity that still fits {target_venue}?
+- Define 3 stop/pivot triggers with concrete thresholds.
 
-## YAML Front-Matter Requirements
-
-You MUST output THREE separate markdown documents with clear delimiters. Each document MUST begin with its own YAML front-matter:
-
-**For 01_Claims_and_NonClaims.md:**
-```yaml
----
-doc_type: "01_Claims_and_NonClaims"
-version: "0.1"
-status: "draft"
-created_by: "ChatGPT"
-target_venue: "{target_venue}"
-topic: "[One-line summary from killer prior check]"
-inputs:
-  - "01_Killer_Prior_Check.md"
-outputs:
-  - "01_Claims_and_NonClaims.md"
-gate_relevance: "Gate 1"
----
-```
-
-**For 01_Minimal_Verification_Set.md:**
-```yaml
----
-doc_type: "01_Minimal_Verification_Set"
-version: "0.1"
-status: "draft"
-created_by: "ChatGPT"
-target_venue: "{target_venue}"
-topic: "[One-line summary from killer prior check]"
-inputs:
-  - "01_Killer_Prior_Check.md"
-  - "01_Claims_and_NonClaims.md"
-outputs:
-  - "01_Minimal_Verification_Set.md"
-gate_relevance: "Gate 1"
----
-```
-
-**For 01_Pivot_Rules.md:**
-```yaml
----
-doc_type: "01_Pivot_Rules"
-version: "0.1"
-status: "draft"
-created_by: "ChatGPT"
-target_venue: "{target_venue}"
-topic: "[One-line summary from killer prior check]"
-inputs:
-  - "01_Killer_Prior_Check.md"
-  - "01_Claims_and_NonClaims.md"
-outputs:
-  - "01_Pivot_Rules.md"
-gate_relevance: "Gate 1"
----
-```
-
-## IMPORTANT - Output Format:
+## Output Format
+Three files, each with YAML front-matter (gate_relevance: Gate2):
+- `01_Claims_and_NonClaims.md` (status: frozen)
+- `01_Minimal_Verification_Set.md`
+- `01_Pivot_Rules.md`
 
 You MUST output THREE separate markdown documents with clear delimiters:
 
 ---DOCUMENT_1: 01_Claims_and_NonClaims.md---
-[Content for frozen claims and non-claims]
+```yaml
+---
+doc_type: ClaimsAndNonClaims
+version: "0.1"
+status: frozen
+created_by: ChatGPT
+target_venue: "{target_venue}"
+gate_relevance: Gate2
+---
+```
+[Frozen claims and non-claims content]
 ---END_DOCUMENT_1---
 
 ---DOCUMENT_2: 01_Minimal_Verification_Set.md---
-[Content for minimal verification set with <=6 units, each with inputs/outputs/PASS-FAIL criteria]
+```yaml
+---
+doc_type: MinimalVerificationSet
+version: "0.1"
+status: draft
+created_by: ChatGPT
+target_venue: "{target_venue}"
+gate_relevance: Gate2
+---
+```
+[MVS with <=6 units, each with inputs/outputs/PASS-FAIL criteria]
 ---END_DOCUMENT_2---
 
 ---DOCUMENT_3: 01_Pivot_Rules.md---
-[Content for pivot rules - what to do if key phenomenon is weak or absent]
+```yaml
+---
+doc_type: PivotRules
+version: "0.1"
+status: draft
+created_by: ChatGPT
+target_venue: "{target_venue}"
+gate_relevance: Gate2
+---
+```
+[Pivot rules with 3 stop/pivot triggers]
 ---END_DOCUMENT_3---
 
 Each document should be complete and standalone.
@@ -483,10 +606,28 @@ Each document should be complete and standalone.
     return prompt
 
 
+# ============================================================
+# LEGACY: Step 1.4 Prompt (SOP v4.0) — 保留用于对比
+# ============================================================
+# def render_step_1_4_prompt_v4_legacy(killer_prior_content, target_venue):
+#     prompt = f"""You are the PI. We have a Killer Prior Check result.
+#     Target venue: {target_venue}
+#     ## Killer Prior Check Result: {killer_prior_content}
+#     ## Tasks:
+#     1) Update and FREEZE the claim set (>=6 claims, >=6 non-claims)
+#     2) Define a Minimal Verification Set (<=6 units, inputs/outputs/PASS-FAIL)
+#     3) Define Pivot Rules (alternative paper identity if phenomenon is weak)
+#     ## Output: THREE documents with YAML front-matter and delimiters
+#     """
+#     return prompt
+
+
+# v7 SOP 6.15 [可选] Figure-First Story — Gemini
+# Agentic Wrapper is handled by wrapper_mode parameter, NOT inlined in prompt.
 def render_step_1_5_prompt(frozen_claims_content: str, target_venue: str) -> str:
     """
-    渲染 Step 1.5 Prompt: Paper Identity & Figure-First Story (Gemini)
-    Enhanced with Agentic Wrapper (v4.0)
+    渲染 Step 1.5 Prompt: Figure-First Story (Gemini)
+    v7 SOP 6.15 — Senior Editor role, 3 specific actions
 
     Args:
         frozen_claims_content: Frozen Claims 内容
@@ -495,273 +636,173 @@ def render_step_1_5_prompt(frozen_claims_content: str, target_venue: str) -> str
     Returns:
         str: 渲染后的 prompt
     """
-    prompt = f"""You are the senior editor of {target_venue}.
+    prompt = f"""You are a Senior Editor of {target_venue}.
 
-**CRITICAL: AGENTIC-FIRST / EVIDENCE-FIRST RULES (SOP v4.0):**
-1) 先列 Plan（最多 6 步），再执行分析/设计，再输出产物；不要先写结论。
-2) 每个关键判断必须给 Evidence（引用 frozen claims 中的具体 claim 编号或 figure 编号）。
-3) 不允许占位符或模糊引用；若找不到就标记 UNKNOWN 并降级结论。
-4) 输出必须结构化、短句、可被脚本解析；禁止把整篇正文包进 ```markdown``` 代码块。
-5) 最后必须给：Risk list（>=5）+ What to verify（>=5）+ Confidence（0-1）。
+## Task
+Build a figure-first narrative after claims are frozen.
 
-## Given Frozen Claims + Minimal Figure List:
+## Input
+- `01_Claims_and_NonClaims.md` (frozen) — attached below.
+- `01_Minimal_Verification_Set.md` — attached below.
+
+## Frozen Claims + Minimal Figure List:
 {frozen_claims_content}
 
-## Goal:
-Build a figure-first narrative that maps each figure to reviewer questions, and provide 3 title + abstract candidates for {target_venue}.
+## Actions (complete all three)
 
-## Output (MUST be structured, no long essay):
+### 1. Figure-First Narrative
+Build a figure-first narrative: each figure answers which reviewer question?
 
-## 0) Plan
-List 3-6 steps you will take to complete this Figure-First Story:
-- Step 1: [action - e.g., extract frozen claims and identify key assertions]
-- Step 2: [action - e.g., map each claim to potential reviewer questions]
-- Step 3: [action - e.g., design figure sequence to answer questions]
-- Step 4: [action - e.g., draft caption style for {target_venue}]
-- Step 5: [action - e.g., generate 3 title + abstract candidates]
-- Step 6: [action - e.g., validate narrative coherence and venue fit]
+For each figure:
+- Reviewer Question it answers
+- Claims Supported (by claim number)
+- Key Message (1-2 sentences)
+- Caption style and emphasis points for {target_venue}
 
-## 1) Actions Taken
-Document what you actually did:
-- Analyzed: [number] frozen claims
-- Mapped: [number] figures to reviewer questions
-- Designed: [description of narrative structure]
-- Generated: [number] title + abstract candidates
-- Validated: [what was checked for venue fit]
+Describe the narrative flow: how figures connect to tell a coherent story.
 
-## 2) Evidence Validation
-For each key narrative decision, provide:
-- Decision: [e.g., Figure 1 should show X]
-- Evidence: [e.g., Supports Claim 1 and Claim 3 from frozen claims]
-- Reviewer Question: [e.g., "Does the method work on real data?"]
-- Status: VALIDATED / NEEDS_VERIFICATION
+### 2. Title + Abstract Candidates
+Provide 3 title + abstract candidates (no hype, no invented results).
 
-## 3) Deliverables
+For each candidate:
+- Title (concise, no hype)
+- Abstract (150-200 words: Problem → Gap → Contribution → Key Results → Implications)
+- Venue Fit Score (0.0-1.0) with justification
 
-### A) Figure-First Narrative
+Recommend one with brief justification.
 
-For each figure in the minimal figure list:
+### 3. Caption Style Guidance
+Suggest caption style and emphasis points for {target_venue}.
 
-**Figure [N]: [Title/Description]**
-- **Reviewer Question**: [What question does this figure answer?]
-- **Claims Supported**: [List claim numbers from frozen claims, e.g., Claims 1, 3, 5]
-- **Key Message**: [1-2 sentences on what this figure proves]
-- **Caption Style for {target_venue}**: [Brief guidance on caption length, tone, and emphasis]
-- **What to Emphasize**: [Specific elements to highlight - e.g., error bars, baselines, statistical significance]
-- **Potential Reviewer Concerns**: [What might reviewers question about this figure?]
-
-**Narrative Flow**:
-[2-3 sentences describing how the figures connect to tell a coherent story from introduction to conclusion]
-
-### B) Title + Abstract Candidates
-
-**Candidate 1:**
-- **Title**: [Concise title, no hype]
-- **Abstract**: [150-200 words, structured as: Problem → Gap → Our Contribution → Key Results → Implications. NO invented results, only what frozen claims promise.]
-- **Venue Fit Score**: [0.0-1.0] - [Brief justification for {target_venue}]
-
-**Candidate 2:**
-- **Title**: [Alternative angle, no hype]
-- **Abstract**: [150-200 words, different emphasis than Candidate 1]
-- **Venue Fit Score**: [0.0-1.0] - [Brief justification for {target_venue}]
-
-**Candidate 3:**
-- **Title**: [Third option, no hype]
-- **Abstract**: [150-200 words, different emphasis than Candidates 1 & 2]
-- **Venue Fit Score**: [0.0-1.0] - [Brief justification for {target_venue}]
-
-**Recommendation**: [Which candidate is strongest for {target_venue} and why?]
-
-## 4) Risks
-List >=5 risks identified during Figure-First Story design:
-- Risk 1: [e.g., Figure 2 may not be sufficient to prove Claim 4 - needs additional baseline]
-- Risk 2: [e.g., Abstract Candidate 1 may be too technical for {target_venue} audience]
-- Risk 3: [e.g., Narrative flow assumes Figure 3 results will be strong - may need pivot if weak]
-- Risk 4: [e.g., Caption style for {target_venue} requires extensive statistical details - may exceed space limits]
-- Risk 5: [e.g., Reviewer Question for Figure 1 may be too broad - needs refinement]
-- ...
-
-## 5) Verification Checklist
-List >=5 items that need verification before proceeding:
-- [ ] Item 1: [e.g., Confirm Figure 1 design can actually answer the stated reviewer question]
-- [ ] Item 2: [e.g., Validate that all frozen claims are covered by at least one figure]
-- [ ] Item 3: [e.g., Check that abstract candidates match {target_venue} word limits]
-- [ ] Item 4: [e.g., Verify caption style examples from recent {target_venue} papers]
-- [ ] Item 5: [e.g., Ensure no hype or invented results in title + abstract candidates]
-- ...
-
-## 6) Confidence Score
-Overall confidence in this Figure-First Story: [0.0-1.0]
-- Figure-to-question mapping: [0.0-1.0] (how well figures answer reviewer questions)
-- Narrative coherence: [0.0-1.0] (how well figures connect to tell a story)
-- Venue fit: [0.0-1.0] (how well title + abstracts match {target_venue} style)
-- Claims coverage: [0.0-1.0] (% of frozen claims covered by figures)
-
-## YAML Front-Matter Requirements
-
-You MUST output TWO separate markdown documents with clear delimiters. Each document MUST begin with its own YAML front-matter:
-
-**For 01_Figure_First_Story.md:**
-```yaml
----
-doc_type: "01_Figure_First_Story"
-version: "0.1"
-status: "draft"
-created_by: "Gemini"
-target_venue: "{target_venue}"
-topic: "[One-line summary from frozen claims]"
-inputs:
-  - "01_Claims_and_NonClaims.md"
-  - "01_Minimal_Verification_Set.md"
-outputs:
-  - "01_Figure_First_Story.md"
-gate_relevance: "Gate 1"
----
-```
-
-**For 01_Title_Abstract_Candidates.md:**
-```yaml
----
-doc_type: "01_Title_Abstract_Candidates"
-version: "0.1"
-status: "draft"
-created_by: "Gemini"
-target_venue: "{target_venue}"
-topic: "[One-line summary from frozen claims]"
-inputs:
-  - "01_Claims_and_NonClaims.md"
-  - "01_Figure_First_Story.md"
-outputs:
-  - "01_Title_Abstract_Candidates.md"
-gate_relevance: "Gate 1"
----
-```
-
-## IMPORTANT - Output Format:
-
-You MUST output TWO separate markdown documents with clear delimiters.
-
-**CRITICAL FORMAT REQUIREMENTS:**
-1. Start with the delimiter line: ---DOCUMENT_1: 01_Figure_First_Story.md---
-2. Do NOT use code blocks (```) anywhere in your response
-3. Do NOT wrap YAML front-matter in code blocks
-4. Output raw markdown text only
-
-**EXACT FORMAT (follow this precisely):**
+## Output Format
+Two files with YAML front-matter:
 
 ---DOCUMENT_1: 01_Figure_First_Story.md---
+```yaml
 ---
-doc_type: "01_Figure_First_Story"
+doc_type: FigureFirstStory
 version: "0.1"
-status: "draft"
-created_by: "Gemini"
+status: draft
+created_by: Gemini
 target_venue: "{target_venue}"
-topic: "[topic from frozen claims]"
-inputs:
-  - "01_Claims_and_NonClaims.md"
-  - "01_Minimal_Verification_Set.md"
-outputs:
-  - "01_Figure_First_Story.md"
-gate_relevance: "Gate 1"
+gate_relevance: Gate1
 ---
-
-## 0) Plan
-[Your plan here]
-
-## 1) Actions Taken
-[Your actions here]
-
-[... rest of sections 2-6 ...]
-
+```
+[Figure-first narrative + caption guidance]
 ---END_DOCUMENT_1---
 
 ---DOCUMENT_2: 01_Title_Abstract_Candidates.md---
+```yaml
 ---
-doc_type: "01_Title_Abstract_Candidates"
+doc_type: TitleAbstractCandidates
 version: "0.1"
-status: "draft"
-created_by: "Gemini"
+status: draft
+created_by: Gemini
 target_venue: "{target_venue}"
-topic: "[topic from frozen claims]"
-inputs:
-  - "01_Claims_and_NonClaims.md"
-  - "01_Figure_First_Story.md"
-outputs:
-  - "01_Title_Abstract_Candidates.md"
-gate_relevance: "Gate 1"
+gate_relevance: Gate1
 ---
-
-### B) Title + Abstract Candidates
-
-[Your candidates here]
-
+```
+[3 title + abstract candidates with recommendation]
 ---END_DOCUMENT_2---
-
-**REMINDER**:
-- NO code blocks (```) anywhere
-- NO wrapping in ```yaml or ```markdown
-- Start directly with: ---DOCUMENT_1: 01_Figure_First_Story.md---
-- Output raw markdown text only
 """
 
     return prompt
 
 
-def render_step_1_1b_prompt(literature_matrix_content: str) -> str:
+# ============================================================
+# LEGACY: Step 1.5 Prompt (SOP v4.0) — 保留用于对比
+# ============================================================
+# def render_step_1_5_prompt_v4_legacy(frozen_claims_content, target_venue):
+#     prompt = f"""You are the senior editor of {target_venue}.
+#     **CRITICAL: AGENTIC-FIRST / EVIDENCE-FIRST RULES (SOP v4.0):**
+#     1) 先列 Plan ... 2) Evidence ... 3) 不允许占位符 ... 4) 结构化 ... 5) Risk list + Confidence
+#     ## Given Frozen Claims: {frozen_claims_content}
+#     ## Goal: Build figure-first narrative + 3 title/abstract candidates
+#     ## Output: sections 0-6 (Plan, Actions, Evidence, Deliverables with Figure Narrative
+#     ##   + Title/Abstract Candidates, Risks, Verification, Confidence)
+#     ## Two documents: 01_Figure_First_Story.md + 01_Title_Abstract_Candidates.md
+#     """
+#     return prompt
+
+
+def render_step_1_3b_prompt(literature_matrix_content: str, killer_prior_content: str = "") -> str:
     """
-    渲染 Step 1.1b Prompt: Reference QA (Gemini) - v4.0 NEW
+    渲染 Step 1.3b Prompt: Reference QA (Gemini) - v4.0 NEW (renamed from step_1_1b)
 
     Args:
-        literature_matrix_content: Literature Matrix 内容（来自 Deep Research Summary）
+        literature_matrix_content: Literature Matrix v7 内容
+        killer_prior_content: Killer Prior Check 内容（可选，v7 S3b 输入）
 
     Returns:
         str: 渲染后的 prompt
     """
+    killer_prior_section = ""
+    if killer_prior_content:
+        killer_prior_section = f"""
+
+## Killer Prior Check Context:
+{killer_prior_content}
+
+Use the Killer Prior Check to cross-validate references and identify any additional references that should be verified.
+"""
+
     prompt = f"""You are a meticulous research librarian and citation validator.
 
 ## Given Literature Matrix:
 {literature_matrix_content}
+{killer_prior_section}
+
+## CRITICAL RULE — DO NOT FABRICATE DOIs OR URLs
+
+You MUST copy the EXACT DOI or URL from the input documents for each reference.
+- If the input has a full URL like `https://ieeexplore.ieee.org/document/9398860`, use EXACTLY that URL.
+- If the input has `[10.1109/ACCESS.2022.3204981](https://ieeexplore.ieee.org/document/9868779)`, use EXACTLY that URL.
+- If the input has a raw DOI identifier like `10.1109/ACCESS.2022.3204981` or `DOI: 10.2528/PIERM20061502` WITHOUT a full URL, convert it to a doi.org resolver link: `https://doi.org/10.1109/ACCESS.2022.3204981`. This is NOT fabrication — doi.org is the official DOI resolver.
+- NEVER invent, guess, or "correct" a DOI number itself. If NO DOI and NO URL is present in the input for a reference, write "NO_DOI".
+- NEVER convert an existing full URL (e.g., IEEE Xplore) to a doi.org URL. Keep existing full URLs as-is. Only use doi.org for raw DOI identifiers that have no accompanying URL.
 
 ## Tasks:
 
-1) **Extract and Validate References**
-   - Extract all references from the literature matrix
-   - For each reference, extract:
-     * Title
-     * Authors (if available)
-     * Venue/Year
-     * DOI or URL
-   - Create a structured table with these fields
+1) **Extract and Merge References**
+   - Extract all references from the Literature Matrix AND the Killer Prior Check (if provided)
+   - Merge and deduplicate by title similarity
+   - Copy the ORIGINAL DOI/URL exactly as it appears in the input
 
 2) **Quality Checks**
    - Identify references missing DOI/URL
    - Flag potential duplicates (similar titles)
-   - Check for incomplete citations
+   - Check for incomplete citations (missing venue, year, etc.)
 
 3) **Generate Verified References**
    - Create a clean bibliography in BibTeX format
-   - Include only references with valid DOI or verifiable URL
+   - Use the ORIGINAL URL/DOI from the input documents in each BibTeX entry
    - Use consistent citation keys (e.g., author_year_keyword)
 
 ## Output Format:
 
 ### A) Literature Matrix (Enhanced)
-[Reproduce the literature matrix with DOI column highlighted]
+Reproduce ALL references as a numbered markdown table with these columns:
+
+| # | Title | Venue/Year | DOI/Link | Status |
+|---|-------|------------|----------|--------|
+| 1 | [Paper title] | [Venue, Year] | [Link](ORIGINAL_URL_FROM_INPUT) | HAS_URL / NO_DOI |
+
+Rules for DOI/Link column:
+- If the input has a full URL, copy it EXACTLY: `[Link](https://ieeexplore.ieee.org/document/XXXXXXX)`
+- If the input has only a raw DOI (e.g., `10.1109/...`), convert to resolver link: `[DOI](https://doi.org/10.1109/...)`
+- If neither URL nor DOI exists in the input, write `NO_DOI`.
+- NEVER fabricate a DOI number. Only use DOI identifiers that appear in the input documents.
+
+Every reference from both input documents must appear. Number rows sequentially starting from 1.
 
 ### B) Reference Quality Report
 - Total references: [count]
-- References with DOI: [count] ([percentage]%)
-- References with URL only: [count]
+- References with URL/DOI: [count] ([percentage]%)
 - Missing DOI/URL: [count]
-- Potential duplicates: [list]
+- Potential duplicates: [list if any]
 
-### C) Verified References (BibTeX)
-```bibtex
-[Clean BibTeX entries for all references with valid DOI/URL]
-```
-
-### D) Action Items
-[List of references that need DOI/URL added or need to be replaced]
+### C) Action Items
+[List of references that are missing URL/DOI or have incomplete metadata]
 
 ## YAML Front-Matter Requirements
 
@@ -776,20 +817,21 @@ created_by: "Gemini"
 target_venue: "[Extract from project context]"
 topic: "[One-line summary from deep research]"
 inputs:
-  - "00_Deep_Research_Summary.md"
-  - "00_Literature_Matrix.md"
+  - "01_C_Literature_Matrix.md"
+  - "01_Killer_Prior_Check.md"
 outputs:
-  - "00_Reference_QA_Report.md"
-  - "00_Verified_References.bib"
+  - "01_Reference_QA_Report.md"
+  - "01_Verified_References.bib"
 gate_relevance: "Gate 1.6"
-evidence_quality: "[0.0-1.0 based on DOI validation rate]"
+evidence_quality: "[0.0-1.0 based on URL coverage rate]"
 doi_validation_passed: "[true/false based on quality threshold]"
 ---
 ```
 
-After the YAML front-matter, provide the complete document content following the structure above (sections A-D).
+After the YAML front-matter, provide the complete document content following the structure above (sections A-C).
 
-Return as 00_Reference_QA_Report.md with embedded BibTeX section.
+## FINAL REMINDER
+DO NOT fabricate any DOI number. Every DOI identifier in your output must exist in the input documents. Converting a raw DOI like `10.xxxx/yyyy` to `https://doi.org/10.xxxx/yyyy` is allowed and encouraged — that is the official DOI resolver, not fabrication.
 """
 
     return prompt
@@ -810,7 +852,7 @@ def render_step_1_2b_prompt(selected_topic_content: str, intake_card_content: st
     """
     keywords_str = ", ".join(keywords)
 
-    prompt = f"""You are the PI performing a Topic Alignment Check (Gate 1.25).
+    prompt = f"""You are the PI performing a Topic Alignment Check (Gate 1).
 
 ## Given Project Intake Card:
 {intake_card_content}
@@ -875,7 +917,7 @@ def render_step_1_2b_prompt(selected_topic_content: str, intake_card_content: st
 
 ### 4) Overall Alignment
 - Alignment score: [0.0-1.0]
-- Gate 1.25 Verdict: PASS / FAIL
+- Gate 1 Verdict: PASS / FAIL
 - Recommendations: [if FAIL, what needs to be adjusted]
 
 ## YAML Front-Matter Requirements
@@ -895,7 +937,7 @@ inputs:
   - "01_Selected_Topic.md"
 outputs:
   - "01_Topic_Alignment_Check.md"
-gate_relevance: "Gate 1.25"
+gate_relevance: "Gate 1"
 north_star_question: "[Extract from intake card]"
 ---
 ```
@@ -906,3 +948,79 @@ Return as 01_Topic_Alignment_Check.md.
 """
 
     return prompt
+
+
+# v7.1 S1-1: Core terms addendum for Topic Decision
+TOPIC_DECISION_CORE_TERMS_ADDENDUM = """
+
+## Additional Requirement (v7.1): Core Terms Declaration
+
+At the end of your output, include a YAML block listing the core academic terms used:
+
+```yaml
+core_terms:
+  - "term_1"
+  - "term_2"
+  - "term_3"
+  - "term_4"
+  - "term_5"
+```
+
+These terms will be validated against OpenAlex and Crossref at Gate 1.
+Use established academic terminology. Avoid invented or overly niche terms.
+"""
+
+
+# v7.1 S1-2: Idea-Lab prompts
+IDEA_LAB_GEMINI_PROMPT = """You are a creative research ideation agent. Your goal is to generate 10-15 divergent research idea candidates based on the literature matrix.
+
+## Literature Matrix
+{literature_matrix}
+
+## Research Context
+- Topic area: {topic}
+- Target venue: {venue}
+
+## Task
+Generate 10-15 candidate research ideas. For each idea, provide:
+
+1. **title**: A concise, descriptive title (1 line)
+2. **gap**: The specific research gap this idea addresses (2-3 sentences)
+3. **mechanism**: The proposed mechanism or approach (2-3 sentences)
+4. **novelty_delta**: What makes this different from existing work (1-2 sentences)
+5. **feasibility_score**: Estimated feasibility (0.0-1.0) with brief justification
+
+## Output Format (MUST follow exactly)
+
+### Idea 1
+- **title**: [title]
+- **gap**: [gap description]
+- **mechanism**: [mechanism description]
+- **novelty_delta**: [novelty description]
+- **feasibility_score**: [0.0-1.0] — [justification]
+
+### Idea 2
+...
+
+(Repeat for all ideas)
+
+## Guidelines
+- Be creative and divergent — explore different angles
+- At least 2 ideas should be "high-risk, high-reward"
+- At least 1 idea should be conservative and highly feasible
+- Ground each idea in evidence from the literature matrix
+- Avoid ideas that are trivial extensions of existing work
+"""
+
+
+TOPIC_DECISION_IDEALAB_ADDENDUM = """
+
+## Additional Context: Idea-Lab Candidates
+
+The following divergent research ideas were generated by the Idea-Lab:
+
+{idea_lab_content}
+
+Consider these candidates alongside the literature analysis when making your topic decision.
+You may select one of these ideas, combine elements, or propose something entirely different.
+"""

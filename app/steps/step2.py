@@ -78,11 +78,18 @@ class Step2_1_FullProposal(BaseStep):
             if not frozen_claims_content:
                 raise StepExecutionError("Claims and NonClaims not found. Please run Step 1.4 first.")
 
+            # 获取 Minimal Verification Set（可选，v7: S5a 输入）
+            mvs_content = await self.load_context_with_fallback(
+                step_id="step_1_4",
+                doc_type=DocumentType.MINIMAL_VERIFICATION_SET
+            )
+
             # 渲染 Prompt
             prompt = render_step_2_1_prompt(
                 selected_topic_content=selected_topic_content,
                 frozen_claims_content=frozen_claims_content,
-                target_venue=self.project.config.target_venue
+                target_venue=self.project.config.target_venue,
+                mvs_content=mvs_content if mvs_content else ""
             )
 
             # 调用 ChatGPT（PI/架构师角色）
@@ -105,6 +112,7 @@ class Step2_1_FullProposal(BaseStep):
                     "step_name": self.step_name,
                     "selected_topic_included": True,
                     "frozen_claims_included": True,
+                    "mvs_included": bool(mvs_content),
                     "gate_1_5_checked": True
                 }
             )
@@ -117,7 +125,7 @@ class Step2_1_FullProposal(BaseStep):
                 doc_type=DocumentType.FULL_PROPOSAL,
                 content=content,
                 status=DocumentStatus.COMPLETED,
-                inputs=[DocumentType.SELECTED_TOPIC.value, DocumentType.CLAIMS_AND_NONCLAIMS.value],
+                inputs=[DocumentType.SELECTED_TOPIC.value, DocumentType.CLAIMS_AND_NONCLAIMS.value, DocumentType.MINIMAL_VERIFICATION_SET.value],
                 outputs=[DocumentType.DATA_SIM_SPEC.value]
             )
 
@@ -512,8 +520,41 @@ class Step2_4_RedTeamReview(BaseStep):
             if not engineering_spec_content:
                 raise StepExecutionError("Engineering Spec not found. Please run Step 2.3 first.")
 
-            # 合并文档内容
-            combined_content = f"""# Full Proposal
+            # v7: 加载额外的 4 个输入文档（S6 Review Packet）
+            frozen_claims_content = await self.load_context_with_fallback(
+                step_id="step_1_4",
+                doc_type=DocumentType.CLAIMS_AND_NONCLAIMS
+            )
+
+            mvs_content = await self.load_context_with_fallback(
+                step_id="step_1_4",
+                doc_type=DocumentType.MINIMAL_VERIFICATION_SET
+            )
+
+            test_plan_content = await self.load_context_with_fallback(
+                step_id="step_2_3",
+                doc_type=DocumentType.TEST_PLAN
+            )
+
+            killer_prior_content = await self.load_context_with_fallback(
+                step_id="step_1_3",
+                doc_type=DocumentType.KILLER_PRIOR_CHECK
+            )
+
+            # 合并文档内容（v7: 6 个输入文档）
+            combined_content = f"""# Frozen Claims and NonClaims
+
+{frozen_claims_content if frozen_claims_content else "[Not available]"}
+
+---
+
+# Minimal Verification Set
+
+{mvs_content if mvs_content else "[Not available]"}
+
+---
+
+# Full Proposal
 
 {full_proposal_content}
 
@@ -522,6 +563,18 @@ class Step2_4_RedTeamReview(BaseStep):
 # Engineering Specification
 
 {engineering_spec_content}
+
+---
+
+# Test Plan
+
+{test_plan_content if test_plan_content else "[Not available]"}
+
+---
+
+# Killer Prior Check (Top 5 Prior)
+
+{killer_prior_content if killer_prior_content else "[Not available]"}
 """
 
             # v6.0: 使用 Controlled Red Team Service
@@ -580,7 +633,14 @@ class Step2_4_RedTeamReview(BaseStep):
                 doc_type=DocumentType.REDTEAM_REVIEW,
                 content=content,
                 status=DocumentStatus.COMPLETED,
-                inputs=[DocumentType.FULL_PROPOSAL.value, DocumentType.ENGINEERING_SPEC.value],
+                inputs=[
+                    DocumentType.CLAIMS_AND_NONCLAIMS.value,
+                    DocumentType.MINIMAL_VERIFICATION_SET.value,
+                    DocumentType.FULL_PROPOSAL.value,
+                    DocumentType.ENGINEERING_SPEC.value,
+                    DocumentType.TEST_PLAN.value,
+                    DocumentType.KILLER_PRIOR_CHECK.value
+                ],
                 outputs=[DocumentType.RESEARCH_PLAN_FROZEN.value]
             )
 

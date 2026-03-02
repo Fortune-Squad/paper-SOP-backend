@@ -67,6 +67,17 @@ class ResourceCard(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ResourceCardInput(BaseModel):
+    """用户填写的 Resource Card 表单数据 (v7 SOP: S-1 Document 3)"""
+    data_access: str = Field(default="", description="数据访问 — 用户可访问/模拟的数据")
+    compute_equipment: str = Field(default="", description="计算与设备 — 可用的计算/设备资源")
+    domain_expertise: str = Field(default="", description="领域专长 — 团队的领域专长")
+    reusable_code: str = Field(default="", description="可复用代码 — 可复用的代码/库")
+    hard_constraints: str = Field(default="", description="硬约束 — 时间/预算硬约束")
+    explicit_gaps: str = Field(default="", description="显式缺口 — 明确不可用的资源")
+    is_skipped: bool = Field(default=False, description="是否跳过（默认纯理论仿真研究）")
+
+
 class BootloaderResult(BaseModel):
     """Bootloader 执行结果"""
     domain_dictionary: DomainDictionary

@@ -4,8 +4,10 @@ S-1 Bootloader Service
 预项目启动阶段服务，生成 Domain Dictionary、OOT Candidates 和 Resource Card
 
 v6.0 NEW: Pre-project initialization service
+v7.0 FIX: Real AI response parsing (replaces hardcoded example data)
 """
 import logging
+import re
 import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime
@@ -52,46 +54,58 @@ class BootloaderService:
         context: Optional[str] = None
     ) -> DomainDictionary:
         """
-        生成领域词典
+        生成领域词典 (v7 SOP: S-1 Document 1)
 
         Args:
-            domain: 研究领域
-            context: 额外上下文信息
+            domain: 用户的模糊研究想法
+            context: 用户背景/资源信息
 
         Returns:
             DomainDictionary: 领域词典
         """
         logger.info(f"Generating domain dictionary for: {domain}")
 
-        # 构建 prompt
-        prompt = f"""You are a domain expert. Generate a comprehensive domain dictionary for the following research domain:
+        # v7 SOP prompt (6.S-1)
+        prompt = f"""ROLE: PI / Domain Analyst
+TASK: Break down a fuzzy research intent into structured, searchable components.
 
-Domain: {domain}
+INPUT:
+- User's fuzzy idea: {domain}
+{f"- User's background/resources: {context}" if context else ""}
 
-{f"Context: {context}" if context else ""}
+ACTION — Produce a Domain Dictionary (S-1_Domain_Dictionary.md):
 
-Please identify and define 10-15 key terms that are essential for understanding this domain. For each term, provide:
-1. Term name
-2. Clear definition
-3. Synonyms (if any)
-4. Related terms
-5. Importance level (high/medium/low)
+Take the key "big word" in the idea (e.g., "combinatorics", "MIMO", "federated learning").
+Break it into 3-8 sub-meanings / sub-fields.
 
-Focus on terms that are:
-- Fundamental to the domain
-- Frequently used in research papers
-- Important for understanding state-of-the-art work
-- Potentially ambiguous or domain-specific
+For each sub-meaning, provide:
+1. Sub-field name
+2. 1-line definition
+3. 2 representative papers/methods (with year and venue if known)
+4. Whether the user likely means this one (YES / MAYBE / NO) based on the fuzzy idea
 
-Format your response as a structured list."""
+End with: "Recommended interpretation: ___" — pick the most likely sub-meaning.
+
+OUTPUT FORMAT:
+Begin with YAML front-matter:
+```yaml
+---
+doc_type: DomainDictionary
+version: "0.1"
+status: draft
+created_by: chatgpt
+gate_relevance: Loop1
+---
+```
+Then provide the structured list. Each sub-meaning should be clearly numbered."""
 
         # 使用 ChatGPT 生成（结构化任务）
         response = await self.chatgpt_client.chat(
-            system_prompt="You are a domain expert specializing in technical terminology and definitions.",
+            system_prompt="You are a PI and domain analyst. Your role is to break down fuzzy research intents into structured, searchable components.",
             prompt=prompt
         )
 
-        # 解析响应（简化版，实际应该更robust）
+        # 解析响应
         terms = self._parse_domain_terms(response)
 
         return DomainDictionary(
@@ -100,7 +114,8 @@ Format your response as a structured list."""
             metadata={
                 "context": context,
                 "generated_by": "chatgpt",
-                "term_count": len(terms)
+                "term_count": len(terms),
+                "raw_response": response
             }
         )
 
@@ -110,47 +125,66 @@ Format your response as a structured list."""
         constraints: Optional[str] = None
     ) -> OOTCandidates:
         """
-        生成 Out-of-Tree (OOT) 候选主题
+        生成 OOT (Object-Observable-Tool) 候选 (v7 SOP: S-1 Document 2)
 
         Args:
-            domain: 研究领域
+            domain: 用户的模糊研究想法
             constraints: 约束条件
 
         Returns:
-            OOTCandidates: OOT 候选主题列表
+            OOTCandidates: OOT 候选列表
         """
         logger.info(f"Generating OOT candidates for: {domain}")
 
-        # 构建 prompt
-        prompt = f"""You are a research strategist. Identify 5-8 promising "Out-of-Tree" (OOT) research topics in the following domain:
+        # v7 SOP prompt (6.S-1)
+        prompt = f"""ROLE: PI / Domain Analyst
+TASK: Generate Object-Observable-Tool (OOT) triples for a fuzzy research idea.
 
-Domain: {domain}
+INPUT:
+- User's fuzzy idea: {domain}
+{f"- Constraints: {constraints}" if constraints else ""}
 
-{f"Constraints: {constraints}" if constraints else ""}
+ACTION — Produce OOT Candidates (S-1_OOT_Candidates.md):
 
-OOT topics are research directions that:
-- Are NOT mainstream or heavily explored
-- Have high novelty potential
-- Are feasible with current technology
-- Could have significant impact if successful
-- Represent "blue ocean" opportunities
+Generate >=3 Object-Observable-Tool triples:
+- Object: what entity/system are we studying?
+- Observable: what measurable quantity are we trying to predict/optimize/prove?
+- Tool: what mathematical/computational method do we apply?
 
-For each OOT candidate, provide:
-1. Topic name
-2. Brief description
-3. Novelty score (0-1)
-4. Feasibility score (0-1)
-5. Impact score (0-1)
-6. Rationale for recommendation
-7. Potential risks
+Example: Object=MIMO channel | Observable=BER | Tool=deep unfolding of MMSE
 
-Format your response as a structured list."""
+For each OOT triple, provide:
+1. Object (the entity/system)
+2. Observable (the measurable quantity)
+3. Tool (the method/approach)
+4. 1-line description of the research direction
+5. Feasibility assessment (do we have the data/compute?)
+6. Novelty assessment (how explored is this direction?)
+7. Venue fit assessment (which venues would accept this?)
+8. Key risks
+
+Rank all triples by: feasibility (do we have the data/compute?), novelty, venue fit.
+
+OUTPUT FORMAT:
+Begin with YAML front-matter:
+```yaml
+---
+doc_type: OOTCandidates
+version: "0.1"
+status: draft
+created_by: gemini
+gate_relevance: Loop1
+---
+```
+Then provide the structured list with clear numbering."""
 
         # 使用 Gemini 生成（创意任务）
+        # meta_tail 模式：OOT prompt 有特定输出格式（编号列表 + OOT triples），
+        # lite 模式会截断为 Deliverables 段落导致内容丢失
         response = await self.gemini_client.chat(
-            system_prompt="You are a creative research strategist specializing in identifying novel research opportunities.",
+            system_prompt="You are a PI and domain analyst specializing in identifying structured research opportunities from fuzzy ideas.",
             prompt=prompt,
-            wrapper_mode="lite"  # 使用 lite 模式获取 Evidence
+            wrapper_mode="meta_tail"
         )
 
         # 解析响应
@@ -162,7 +196,8 @@ Format your response as a structured list."""
             metadata={
                 "constraints": constraints,
                 "generated_by": "gemini",
-                "candidate_count": len(candidates)
+                "candidate_count": len(candidates),
+                "raw_response": response
             }
         )
 
@@ -172,51 +207,79 @@ Format your response as a structured list."""
         focus_areas: Optional[List[str]] = None
     ) -> ResourceCard:
         """
-        生成资源卡片
+        生成资源卡片 (v7 SOP: S-1 Document 3)
+
+        v7 SOP: 盘点用户已有的资源和明确的缺口，而非推荐外部资源
 
         Args:
-            domain: 研究领域
-            focus_areas: 关注领域
+            domain: 用户的模糊研究想法
+            focus_areas: 关注领域（用户提供的背景信息）
 
         Returns:
             ResourceCard: 资源卡片
         """
         logger.info(f"Generating resource card for: {domain}")
 
-        # 构建 prompt
-        prompt = f"""You are a research resource specialist. Identify key resources for the following research domain:
+        focus_info = ""
+        if focus_areas:
+            focus_info = f"- User's mentioned focus areas / background: {', '.join(focus_areas)}"
 
-Domain: {domain}
+        # v7 SOP prompt (6.S-1)
+        prompt = f"""ROLE: PI / Domain Analyst
+TASK: Create a Resource Card that inventories what the user has and what is missing.
 
-{f"Focus Areas: {', '.join(focus_areas)}" if focus_areas else ""}
+INPUT:
+- User's fuzzy idea: {domain}
+{focus_info}
 
-Please identify 15-20 essential resources across these categories:
-1. Datasets (public/restricted/private)
-2. Tools and frameworks
-3. Seminal papers and surveys
-4. Expert researchers and groups
+ACTION — Produce a Resource Card (S-1_Resource_Card.md):
 
-For each resource, provide:
-1. Resource type
-2. Name
-3. Description
-4. URL (if available)
-5. Availability status
-6. Relevance score (0-1)
+Answer each of the following questions. If the user hasn't provided enough info, make reasonable assumptions and mark them as [ASSUMED — needs confirmation].
 
-Prioritize resources that are:
-- Widely used in the community
-- High quality and well-maintained
-- Accessible (prefer public over restricted)
-- Relevant to current research trends
+1. **Data Access**: What data does the user have access to? (or can simulate?)
+   - List each dataset/data source with availability status (have / can-get / need-collect)
 
-Format your response as a structured list."""
+2. **Compute & Equipment**: What compute/equipment is available?
+   - GPU/CPU resources, cloud access, specialized hardware
+
+3. **Domain Expertise**: What domain expertise exists in the team?
+   - List relevant skills and experience levels
+
+4. **Reusable Code & Libraries**: What code/libraries/prior work can be reused?
+   - Existing implementations, frameworks, baselines
+
+5. **Hard Constraints**: What are the hard time/budget constraints?
+   - Deadlines, budget limits, publication targets
+
+6. **Explicit Gaps**: What is NOT available? (explicit gaps that need to be filled)
+   - Missing data, missing expertise, missing compute, etc.
+
+For each resource item, provide:
+- Resource type (dataset / tool / expertise / code / constraint / gap)
+- Name or description
+- Availability (available / partial / missing)
+- Relevance to the research idea (high / medium / low)
+
+OUTPUT FORMAT:
+Begin with YAML front-matter:
+```yaml
+---
+doc_type: ResourceCard
+version: "0.1"
+status: draft
+created_by: gemini
+gate_relevance: Loop1
+---
+```
+Then provide the structured list grouped by category."""
 
         # 使用 Gemini 生成（研究任务）
+        # meta_tail 模式：Resource Card prompt 有特定输出格式（分类列表），
+        # lite 模式会截断为 Deliverables 段落导致内容丢失
         response = await self.gemini_client.chat(
-            system_prompt="You are a research resource specialist with deep knowledge of academic resources and tools.",
+            system_prompt="You are a PI and domain analyst. Your role is to inventory research resources and identify gaps for a research project.",
             prompt=prompt,
-            wrapper_mode="lite"
+            wrapper_mode="meta_tail"
         )
 
         # 解析响应
@@ -228,7 +291,8 @@ Format your response as a structured list."""
             metadata={
                 "focus_areas": focus_areas,
                 "generated_by": "gemini",
-                "resource_count": len(resources)
+                "resource_count": len(resources),
+                "raw_response": response
             }
         )
 
@@ -237,7 +301,8 @@ Format your response as a structured list."""
         domain: str,
         context: Optional[str] = None,
         constraints: Optional[str] = None,
-        focus_areas: Optional[List[str]] = None
+        focus_areas: Optional[List[str]] = None,
+        user_resource_card: Optional[Dict[str, Any]] = None
     ) -> BootloaderResult:
         """
         运行完整的 Bootloader 流程
@@ -247,6 +312,7 @@ Format your response as a structured list."""
             context: 额外上下文
             constraints: 约束条件
             focus_areas: 关注领域
+            user_resource_card: 用户填写的 Resource Card 表单数据（v7.2 NEW）
 
         Returns:
             BootloaderResult: Bootloader 执行结果
@@ -254,10 +320,23 @@ Format your response as a structured list."""
         logger.info(f"Running S-1 Bootloader for domain: {domain}")
         start_time = time.time()
 
-        # 并行生成三个组件
+        # 生成 Domain Dictionary 和 OOT Candidates（始终由 AI 生成）
         domain_dict = await self.generate_domain_dictionary(domain, context)
         oot_candidates = await self.generate_oot_candidates(domain, constraints)
-        resource_card = await self.generate_resource_card(domain, focus_areas)
+
+        # Resource Card: 根据用户输入决定生成方式
+        if user_resource_card and not user_resource_card.get("is_skipped", False):
+            # 用户填写了表单 → 从用户输入构建
+            logger.info("Building Resource Card from user input")
+            resource_card = self._build_resource_card_from_user_input(domain, user_resource_card)
+        elif user_resource_card and user_resource_card.get("is_skipped", False):
+            # 用户跳过 → 生成默认纯理论仿真 Resource Card
+            logger.info("Building default theoretical Resource Card (user skipped)")
+            resource_card = self._build_default_theoretical_resource_card(domain)
+        else:
+            # 无用户数据 → 保留原 AI 生成路径（向后兼容）
+            logger.info("Generating Resource Card via AI (legacy path)")
+            resource_card = await self.generate_resource_card(domain, focus_areas)
 
         execution_time = time.time() - start_time
 
@@ -270,54 +349,464 @@ Format your response as a structured list."""
             execution_time=execution_time
         )
 
+    def _build_resource_card_from_user_input(
+        self,
+        domain: str,
+        user_input: Dict[str, Any]
+    ) -> ResourceCard:
+        """
+        从用户填写的表单数据构建 ResourceCard
+
+        每个非空字段生成一个 ResourceItem，按 v7 SOP 6 分类映射。
+
+        Args:
+            domain: 研究领域
+            user_input: 用户表单数据
+
+        Returns:
+            ResourceCard: 资源卡片
+        """
+        resources = []
+        field_mapping = [
+            ("data_access", "dataset", "Data Access"),
+            ("compute_equipment", "tool", "Compute & Equipment"),
+            ("domain_expertise", "expertise", "Domain Expertise"),
+            ("reusable_code", "code", "Reusable Code & Libraries"),
+            ("hard_constraints", "constraint", "Hard Constraints"),
+            ("explicit_gaps", "gap", "Explicit Gaps"),
+        ]
+
+        for field_key, resource_type, display_name in field_mapping:
+            value = user_input.get(field_key, "").strip()
+            if value:
+                resources.append(ResourceItem(
+                    resource_type=resource_type,
+                    name=display_name,
+                    description=value,
+                    url=None,
+                    availability="available" if resource_type not in ("constraint", "gap") else "missing",
+                    relevance_score=1.0
+                ))
+
+        return ResourceCard(
+            domain=domain,
+            resources=resources,
+            metadata={
+                "source": "user_input",
+                "generated_by": "user",
+                "resource_count": len(resources),
+            }
+        )
+
+    def _build_default_theoretical_resource_card(self, domain: str) -> ResourceCard:
+        """
+        生成默认"纯理论仿真性研究" ResourceCard（用户跳过表单时使用）
+
+        Args:
+            domain: 研究领域
+
+        Returns:
+            ResourceCard: 默认资源卡片
+        """
+        resources = [
+            ResourceItem(
+                resource_type="dataset",
+                name="Data Access",
+                description="纯理论/仿真研究 — 无需外部数据集，使用合成数据或数学推导",
+                url=None,
+                availability="available",
+                relevance_score=0.5
+            ),
+            ResourceItem(
+                resource_type="tool",
+                name="Compute & Equipment",
+                description="标准计算资源（个人电脑/实验室服务器），无特殊硬件需求",
+                url=None,
+                availability="available",
+                relevance_score=0.5
+            ),
+            ResourceItem(
+                resource_type="gap",
+                name="Explicit Gaps",
+                description="用户未提供详细资源信息，建议在后续步骤中补充",
+                url=None,
+                availability="missing",
+                relevance_score=0.8
+            ),
+        ]
+
+        return ResourceCard(
+            domain=domain,
+            resources=resources,
+            metadata={
+                "source": "default_skip",
+                "generated_by": "system",
+                "resource_count": len(resources),
+                "note": "用户跳过 Resource Card 表单，默认为纯理论/仿真性研究"
+            }
+        )
+
     def _parse_domain_terms(self, response: str) -> List[DomainTerm]:
         """
-        解析领域术语（简化版）
+        解析领域术语 — 从 AI 响应中提取 sub-field 条目
 
-        实际实现应该更robust，使用结构化解析
+        v7 prompt 要求格式: 编号列表，每项含 sub-field name, definition,
+        representative papers, YES/MAYBE/NO 判断
         """
-        # 简化实现：返回示例数据
-        # 实际应该解析 AI 响应
-        return [
-            DomainTerm(
-                term="Example Term",
-                definition="Example definition from AI response",
-                synonyms=["synonym1"],
-                related_terms=["related1"],
-                importance="high"
+        terms = []
+        if not response or not response.strip():
+            return terms
+
+        # 按编号段落拆分 (1. / 1) / ### 1 等)
+        sections = re.split(r'\n(?=(?:\d+[\.\)]\s|#{1,3}\s*\d+|#{1,3}\s+Sub))', response)
+
+        for section in sections:
+            section = section.strip()
+            if not section:
+                continue
+
+            # 提取 sub-field name: 编号后的第一行文本
+            name_match = re.match(
+                r'(?:\d+[\.\)]\s*|#{1,3}\s*\d*\.?\s*)'
+                r'(?:\*\*)?(.+?)(?:\*\*)?(?:\n|$)',
+                section
             )
-        ]
+            if not name_match:
+                continue
+
+            term_name = name_match.group(1).strip().rstrip(':').strip()
+            if not term_name or len(term_name) > 200:
+                continue
+
+            # 提取 definition (1-line definition)
+            def_match = re.search(
+                r'(?:definition|定义|描述)[:\s：]*(.+?)(?:\n|$)',
+                section, re.IGNORECASE
+            )
+            definition = def_match.group(1).strip() if def_match else ""
+            if not definition:
+                # fallback: 取 name 之后的第一行非空文本
+                lines = section.split('\n')
+                for line in lines[1:]:
+                    line = line.strip().lstrip('-*• ')
+                    if line and not re.match(r'^(?:representative|papers|whether|user|synonyms|related)', line, re.IGNORECASE):
+                        definition = line
+                        break
+
+            if not definition:
+                definition = section[:200]
+
+            # 提取 YES/MAYBE/NO 判断 → 映射到 importance
+            importance = "medium"
+            relevance_match = re.search(r'\b(YES|MAYBE|NO)\b', section)
+            if relevance_match:
+                mapping = {"YES": "high", "MAYBE": "medium", "NO": "low"}
+                importance = mapping.get(relevance_match.group(1), "medium")
+
+            # 提取 representative papers 作为 related_terms
+            related = []
+            paper_match = re.search(
+                r'(?:representative|papers|methods|references)[:\s：]*(.+?)(?=\n(?:\d+[\.\)]|#{1,3}|whether|$))',
+                section, re.IGNORECASE | re.DOTALL
+            )
+            if paper_match:
+                paper_text = paper_match.group(1)
+                paper_items = re.findall(r'[-•*]\s*(.+?)(?:\n|$)', paper_text)
+                related = [p.strip() for p in paper_items if p.strip()][:4]
+
+            terms.append(DomainTerm(
+                term=term_name,
+                definition=definition,
+                synonyms=[],
+                related_terms=related,
+                importance=importance
+            ))
+
+        # 如果解析失败，用整个响应作为单条 fallback
+        if not terms:
+            logger.warning("Domain Dictionary parsing extracted 0 terms, using raw response as fallback")
+            terms.append(DomainTerm(
+                term="AI Analysis Result",
+                definition=response[:500],
+                synonyms=[],
+                related_terms=[],
+                importance="high"
+            ))
+
+        return terms
 
     def _parse_oot_candidates(self, response: str) -> List[OOTCandidate]:
         """
-        解析 OOT 候选主题（简化版）
+        解析 OOT 候选 — 从 AI 响应中提取 Object-Observable-Tool triples
+
+        v7 prompt 要求格式: >=3 个 OOT triple，每个含 Object, Observable, Tool,
+        description, feasibility, novelty, venue fit, risks
+
+        AI 响应典型格式:
+          **Triple 1 (Rank 1): Title**
+          1. **Object**: ...
+          2. **Observable**: ...
+          ---
+          **Triple 2 (Rank 3): Title**
+          ...
         """
-        return [
-            OOTCandidate(
-                topic="Example OOT Topic",
-                description="Example description from AI response",
-                novelty_score=0.8,
-                feasibility_score=0.7,
-                impact_score=0.9,
-                rationale="Example rationale",
-                risks=["risk1", "risk2"]
+        candidates = []
+        if not response or not response.strip():
+            return candidates
+
+        # 按 triple 级别的分隔符拆分（不是子项编号）
+        # 匹配: **Triple N, ### Triple, ### OOT Triple, ### Candidate, --- 分隔线
+        sections = re.split(
+            r'\n(?=\*\*Triple\s+\d+|#{1,3}\s*(?:OOT\s+)?(?:Triple|Candidate)\s+\d+|---\s*\n\s*\*\*Triple)',
+            response
+        )
+
+        # 如果上面的模式没拆分出多段，尝试用 --- 分隔线拆分
+        if len(sections) <= 1:
+            sections = re.split(r'\n---\s*\n', response)
+
+        for section in sections:
+            section = section.strip()
+            if not section or len(section) < 50:
+                continue
+
+            # 必须包含 Object/Observable/Tool 关键词才算是一个 OOT triple
+            has_object = re.search(r'\*?\*?object\*?\*?[:\s]', section, re.IGNORECASE)
+            has_observable = re.search(r'\*?\*?observable\*?\*?[:\s]', section, re.IGNORECASE)
+            has_tool = re.search(r'\*?\*?tool\*?\*?[:\s]', section, re.IGNORECASE)
+
+            if not (has_object and has_observable):
+                continue
+
+            # 提取 Object
+            obj_match = re.search(
+                r'(?:object|对象)[:\s：|]*(.+?)(?:\n|\||$)',
+                section, re.IGNORECASE
             )
-        ]
+            # 提取 Observable
+            obs_match = re.search(
+                r'(?:observable|观测量|可观测)[:\s：|]*(.+?)(?:\n|\||$)',
+                section, re.IGNORECASE
+            )
+            # 提取 Tool
+            tool_match = re.search(
+                r'(?:tool|工具|方法)[:\s：|]*(.+?)(?:\n|\||$)',
+                section, re.IGNORECASE
+            )
+
+            # 构建 topic 名称
+            obj_str = obj_match.group(1).strip() if obj_match else ""
+            obs_str = obs_match.group(1).strip() if obs_match else ""
+            tool_str = tool_match.group(1).strip() if tool_match else ""
+
+            if obj_str or obs_str or tool_str:
+                topic = " | ".join(filter(None, [obj_str, obs_str, tool_str]))
+            else:
+                # fallback: 取标题行
+                title_match = re.match(
+                    r'(?:\d+[\.\)]\s*|#{1,3}\s*)(.+?)(?:\n|$)', section
+                )
+                topic = title_match.group(1).strip() if title_match else section[:100]
+
+            if not topic:
+                continue
+
+            # 提取 description
+            desc_match = re.search(
+                r'(?:description|描述|research direction|方向)[:\s：]*(.+?)(?:\n|$)',
+                section, re.IGNORECASE
+            )
+            description = desc_match.group(1).strip() if desc_match else ""
+            if not description:
+                lines = section.split('\n')
+                for line in lines[1:]:
+                    line = line.strip().lstrip('-*• ')
+                    if line and len(line) > 20:
+                        description = line
+                        break
+            if not description:
+                description = section[:300]
+
+            # 提取评分 (feasibility / novelty / venue fit → 映射到 0-1)
+            def extract_score(pattern: str, text: str) -> float:
+                m = re.search(pattern, text, re.IGNORECASE)
+                if m:
+                    val = m.group(1).strip().lower()
+                    # 数字评分
+                    num_match = re.search(r'(\d+(?:\.\d+)?)', val)
+                    if num_match:
+                        score = float(num_match.group(1))
+                        return score if score <= 1.0 else score / 10.0
+                    # 文字评分
+                    if any(w in val for w in ['high', '高', 'strong', 'excellent']):
+                        return 0.85
+                    if any(w in val for w in ['medium', '中', 'moderate', 'good']):
+                        return 0.6
+                    if any(w in val for w in ['low', '低', 'weak', 'poor']):
+                        return 0.35
+                return 0.5
+
+            feasibility = extract_score(r'(?:feasibility|可行性)[:\s：]*(.+?)(?:\n|$)', section)
+            novelty = extract_score(r'(?:novelty|新颖性|新颖)[:\s：]*(.+?)(?:\n|$)', section)
+            impact = extract_score(r'(?:venue fit|impact|影响力|venue)[:\s：]*(.+?)(?:\n|$)', section)
+
+            # 提取 risks
+            risks = []
+            risk_match = re.search(
+                r'(?:risk|风险)[s:\s：]*(.+?)(?=\n(?:\d+[\.\)]|#{1,3})|$)',
+                section, re.IGNORECASE | re.DOTALL
+            )
+            if risk_match:
+                risk_text = risk_match.group(1)
+                risk_items = re.findall(r'[-•*]\s*(.+?)(?:\n|$)', risk_text)
+                risks = [r.strip() for r in risk_items if r.strip()][:5]
+
+            # rationale: 用 description 或 section 摘要
+            rationale = description if description != section[:300] else section[:200]
+
+            candidates.append(OOTCandidate(
+                topic=topic[:200],
+                description=description[:500],
+                novelty_score=novelty,
+                feasibility_score=feasibility,
+                impact_score=impact,
+                rationale=rationale[:300],
+                risks=risks
+            ))
+
+        # fallback
+        if not candidates:
+            logger.warning("OOT parsing extracted 0 candidates, using raw response as fallback")
+            candidates.append(OOTCandidate(
+                topic="AI Analysis Result",
+                description=response[:500],
+                novelty_score=0.5,
+                feasibility_score=0.5,
+                impact_score=0.5,
+                rationale="See raw response for full analysis",
+                risks=[]
+            ))
+
+        return candidates
 
     def _parse_resources(self, response: str) -> List[ResourceItem]:
         """
-        解析资源列表（简化版）
+        解析资源列表 — 从 AI 响应中提取资源条目
+
+        v7 prompt 要求格式: 按类别分组 (Data Access, Compute, Expertise, Code, Constraints, Gaps)
+        每项含 resource type, name, availability, relevance
         """
-        return [
-            ResourceItem(
-                resource_type="dataset",
-                name="Example Dataset",
-                description="Example description from AI response",
-                url="https://example.com",
-                availability="public",
-                relevance_score=0.9
+        resources = []
+        if not response or not response.strip():
+            return resources
+
+        # 类别关键词 → resource_type 映射
+        category_map = {
+            'data': 'dataset', 'dataset': 'dataset', '数据': 'dataset',
+            'compute': 'tool', 'equipment': 'tool', 'gpu': 'tool', 'cpu': 'tool',
+            '计算': 'tool', '设备': 'tool',
+            'expertise': 'expert', 'domain expertise': 'expert', '专业': 'expert',
+            'code': 'tool', 'library': 'tool', 'libraries': 'tool', '代码': 'tool',
+            'constraint': 'other', 'budget': 'other', 'deadline': 'other', '约束': 'other',
+            'gap': 'other', 'missing': 'other', '缺口': 'other',
+        }
+
+        # 按大标题拆分 (## / ### / 数字标题)
+        category_sections = re.split(
+            r'\n(?=(?:#{1,3}\s+\d*\.?\s*\*?\*?(?:Data|Compute|Domain|Reusable|Hard|Explicit|Gap|Resource)))',
+            response, flags=re.IGNORECASE
+        )
+
+        current_type = "other"
+
+        for cat_section in category_sections:
+            cat_section = cat_section.strip()
+            if not cat_section:
+                continue
+
+            # 检测当前类别
+            header_match = re.match(r'#{1,3}\s*\d*\.?\s*\*?\*?(.+?)(?:\*\*)?(?:\n|$)', cat_section)
+            if header_match:
+                header_text = header_match.group(1).strip().lower()
+                for keyword, rtype in category_map.items():
+                    if keyword in header_text:
+                        current_type = rtype
+                        break
+
+            # 提取列表项 (- / * / • / 数字)
+            items = re.findall(
+                r'(?:^|\n)\s*[-•*]\s+\*?\*?(.+?)(?:\*\*)?(?:\n|$)',
+                cat_section
             )
-        ]
+            if not items:
+                # 尝试子标题格式
+                items = re.findall(
+                    r'(?:^|\n)\s*(?:#{3,4}|####)\s+(.+?)(?:\n|$)',
+                    cat_section
+                )
+
+            for item_text in items:
+                item_text = item_text.strip()
+                if not item_text or len(item_text) < 5:
+                    continue
+
+                # 提取名称和描述
+                # 格式可能是 "Name: description" 或 "Name (status)" 或 "Name — description"
+                name_desc_match = re.match(
+                    r'(.+?)(?:\s*[:\-—–]\s*(.+))?$', item_text
+                )
+                if name_desc_match:
+                    name = name_desc_match.group(1).strip().rstrip(':')
+                    desc = name_desc_match.group(2) or ""
+                    desc = desc.strip()
+                else:
+                    name = item_text[:80]
+                    desc = item_text
+
+                # 提取 availability
+                availability = "public"
+                avail_match = re.search(
+                    r'\b(have|available|can.?get|need.?collect|missing|partial|unavailable)\b',
+                    item_text, re.IGNORECASE
+                )
+                if avail_match:
+                    val = avail_match.group(1).lower().replace('-', '').replace(' ', '')
+                    if val in ('have', 'available'):
+                        availability = "public"
+                    elif val in ('canget', 'partial'):
+                        availability = "restricted"
+                    else:
+                        availability = "private"
+
+                # 提取 relevance
+                rel_match = re.search(r'\b(high|medium|low)\b', item_text, re.IGNORECASE)
+                relevance = 0.7
+                if rel_match:
+                    mapping = {"high": 0.9, "medium": 0.6, "low": 0.3}
+                    relevance = mapping.get(rel_match.group(1).lower(), 0.7)
+
+                resources.append(ResourceItem(
+                    resource_type=current_type,
+                    name=name[:100],
+                    description=desc[:300] if desc else item_text[:300],
+                    url=None,
+                    availability=availability,
+                    relevance_score=relevance
+                ))
+
+        # fallback
+        if not resources:
+            logger.warning("Resource Card parsing extracted 0 items, using raw response as fallback")
+            resources.append(ResourceItem(
+                resource_type="other",
+                name="AI Analysis Result",
+                description=response[:500],
+                url=None,
+                availability="public",
+                relevance_score=0.7
+            ))
+
+        return resources
 
     def format_domain_dictionary(self, domain_dict: DomainDictionary) -> str:
         """

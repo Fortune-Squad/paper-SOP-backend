@@ -77,18 +77,33 @@ async def get_user_stats(
     Returns:
         User statistics
     """
+    from datetime import datetime, timedelta
+
     total_users = UserService.count_users(db)
     active_users = UserService.count_users(db, is_active=True)
     pending_users = UserService.count_users(db, is_active=False)
     admin_users = UserService.count_users(db, role="admin")
     regular_users = UserService.count_users(db, role="user")
 
+    # 计算时间范围
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=today_start.weekday())
+    month_start = today_start.replace(day=1)
+
+    users_created_today = UserService.count_users(db, created_after=today_start)
+    users_created_this_week = UserService.count_users(db, created_after=week_start)
+    users_created_this_month = UserService.count_users(db, created_after=month_start)
+
     return {
         "total_users": total_users,
         "active_users": active_users,
         "inactive_users": pending_users,  # Frontend expects 'inactive_users'
         "admin_users": admin_users,
-        "regular_users": regular_users
+        "regular_users": regular_users,
+        "users_created_today": users_created_today,
+        "users_created_this_week": users_created_this_week,
+        "users_created_this_month": users_created_this_month
     }
 
 
@@ -123,7 +138,7 @@ async def get_user(
     return User.model_validate(user)
 
 
-@router.put("/{user_id}", response_model=User)
+@router.put("/{user_id}")
 async def update_user(
     user_id: int,
     user_update: UserUpdate,
@@ -140,7 +155,7 @@ async def update_user(
         db: Database session
 
     Returns:
-        Updated user info
+        Updated user info with message
 
     Raises:
         HTTPException: 404 if user not found
@@ -155,10 +170,13 @@ async def update_user(
 
     logger.info(f"Admin {current_user.username} updated user {updated_user.username} (id={user_id})")
 
-    return User.model_validate(updated_user)
+    return {
+        "message": f"User updated successfully",
+        "user": User.model_validate(updated_user)
+    }
 
 
-@router.post("/{user_id}/activate", response_model=User)
+@router.post("/{user_id}/activate")
 async def activate_user(
     user_id: int,
     current_user: DBUser = Depends(require_admin),
@@ -188,10 +206,13 @@ async def activate_user(
 
     logger.info(f"Admin {current_user.username} activated user {activated_user.username} (id={user_id})")
 
-    return User.model_validate(activated_user)
+    return {
+        "message": f"User activated successfully",
+        "user": User.model_validate(activated_user)
+    }
 
 
-@router.post("/{user_id}/deactivate", response_model=User)
+@router.post("/{user_id}/deactivate")
 async def deactivate_user(
     user_id: int,
     current_user: DBUser = Depends(require_admin),
@@ -228,7 +249,10 @@ async def deactivate_user(
 
     logger.info(f"Admin {current_user.username} deactivated user {deactivated_user.username} (id={user_id})")
 
-    return User.model_validate(deactivated_user)
+    return {
+        "message": f"User deactivated successfully",
+        "user": User.model_validate(deactivated_user)
+    }
 
 
 @router.delete("/{user_id}")

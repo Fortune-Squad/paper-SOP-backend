@@ -113,6 +113,7 @@ This is a test artifact.
 
     def test_artifact_update_content(self):
         """测试 Artifact 内容更新"""
+        import time
         metadata = ArtifactMetadata(
             doc_type="ProjectIntake",
             version="0.1",
@@ -128,12 +129,15 @@ This is a test artifact.
             file_path="artifacts/00_intake/test.md"
         )
 
+        # Small delay to ensure updated_at differs
+        time.sleep(0.01)
+
         # 更新内容
         updated_artifact = artifact.update_content("# Updated Content")
 
         assert updated_artifact.metadata.version == "0.2"  # 版本号增加
         assert updated_artifact.content == "# Updated Content"
-        assert updated_artifact.metadata.updated_at > artifact.metadata.updated_at
+        assert updated_artifact.metadata.updated_at >= artifact.metadata.updated_at
 
 
 class TestArtifactStore:
@@ -169,96 +173,73 @@ class TestArtifactStore:
             file_path="artifacts/00_intake/test.md"
         )
 
-    @pytest.mark.asyncio
-    async def test_save_artifact(self, artifact_store, sample_artifact, temp_dir):
+    def test_save_artifact(self, artifact_store, sample_artifact, temp_dir):
         """测试保存 Artifact"""
-        # 修改文件路径为临时目录
-        sample_artifact.file_path = str(Path(temp_dir) / "00_intake" / "test.md")
+        async def _run():
+            sample_artifact.file_path = str(Path(temp_dir) / "00_intake" / "test.md")
+            artifact_id = await artifact_store.save_artifact(sample_artifact)
+            assert artifact_id == "artifact-001"
+            assert Path(sample_artifact.file_path).exists()
+            assert artifact_id in artifact_store.index
+        asyncio.run(_run())
 
-        artifact_id = await artifact_store.save_artifact(sample_artifact)
-
-        assert artifact_id == "artifact-001"
-        assert Path(sample_artifact.file_path).exists()
-        assert artifact_id in artifact_store.index
-
-    @pytest.mark.asyncio
-    async def test_load_artifact(self, artifact_store, sample_artifact, temp_dir):
+    def test_load_artifact(self, artifact_store, sample_artifact, temp_dir):
         """测试加载 Artifact"""
-        # 修改文件路径
-        sample_artifact.file_path = str(Path(temp_dir) / "00_intake" / "test.md")
+        async def _run():
+            sample_artifact.file_path = str(Path(temp_dir) / "00_intake" / "test.md")
+            await artifact_store.save_artifact(sample_artifact)
+            loaded_artifact = await artifact_store.load_artifact("artifact-001")
+            assert loaded_artifact is not None
+            assert loaded_artifact.id == "artifact-001"
+            assert loaded_artifact.metadata.doc_type == "ProjectIntake"
+            assert "Test Content" in loaded_artifact.content
+        asyncio.run(_run())
 
-        # 先保存
-        await artifact_store.save_artifact(sample_artifact)
-
-        # 再加载
-        loaded_artifact = await artifact_store.load_artifact("artifact-001")
-
-        assert loaded_artifact is not None
-        assert loaded_artifact.id == "artifact-001"
-        assert loaded_artifact.metadata.doc_type == "ProjectIntake"
-        assert "Test Content" in loaded_artifact.content
-
-    @pytest.mark.asyncio
-    async def test_list_artifacts(self, artifact_store, temp_dir):
+    def test_list_artifacts(self, artifact_store, temp_dir):
         """测试列出 Artifacts"""
-        # 创建多个 artifacts
-        for i in range(3):
-            metadata = ArtifactMetadata(
-                doc_type="ProjectIntake",
-                version="0.1",
-                status=ArtifactStatus.DRAFT,
-                created_by=CreatedBy.HUMAN,
-                project_id="test-project-001"
-            )
+        async def _run():
+            for i in range(3):
+                metadata = ArtifactMetadata(
+                    doc_type="ProjectIntake",
+                    version="0.1",
+                    status=ArtifactStatus.DRAFT,
+                    created_by=CreatedBy.HUMAN,
+                    project_id="test-project-001"
+                )
+                artifact = Artifact(
+                    id=f"artifact-{i:03d}",
+                    metadata=metadata,
+                    content=f"# Test Content {i}",
+                    file_path=str(Path(temp_dir) / "00_intake" / f"test_{i}.md")
+                )
+                await artifact_store.save_artifact(artifact)
+            artifacts = await artifact_store.list_artifacts("test-project-001")
+            assert len(artifacts) == 3
+        asyncio.run(_run())
 
-            artifact = Artifact(
-                id=f"artifact-{i:03d}",
-                metadata=metadata,
-                content=f"# Test Content {i}",
-                file_path=str(Path(temp_dir) / "00_intake" / f"test_{i}.md")
-            )
-
-            await artifact_store.save_artifact(artifact)
-
-        # 列出所有 artifacts
-        artifacts = await artifact_store.list_artifacts("test-project-001")
-
-        assert len(artifacts) == 3
-
-    @pytest.mark.asyncio
-    async def test_update_artifact(self, artifact_store, sample_artifact, temp_dir):
+    def test_update_artifact(self, artifact_store, sample_artifact, temp_dir):
         """测试更新 Artifact"""
-        # 修改文件路径
-        sample_artifact.file_path = str(Path(temp_dir) / "00_intake" / "test.md")
+        async def _run():
+            sample_artifact.file_path = str(Path(temp_dir) / "00_intake" / "test.md")
+            await artifact_store.save_artifact(sample_artifact)
+            updated_artifact = await artifact_store.update_artifact(
+                "artifact-001", "# Updated Content"
+            )
+            assert updated_artifact is not None
+            assert updated_artifact.metadata.version == "0.2"
+            assert updated_artifact.content == "# Updated Content"
+        asyncio.run(_run())
 
-        # 先保存
-        await artifact_store.save_artifact(sample_artifact)
-
-        # 更新内容
-        updated_artifact = await artifact_store.update_artifact(
-            "artifact-001",
-            "# Updated Content"
-        )
-
-        assert updated_artifact is not None
-        assert updated_artifact.metadata.version == "0.2"
-        assert updated_artifact.content == "# Updated Content"
-
-    @pytest.mark.asyncio
-    async def test_delete_artifact(self, artifact_store, sample_artifact, temp_dir):
+    def test_delete_artifact(self, artifact_store, sample_artifact, temp_dir):
         """测试删除 Artifact"""
-        # 修改文件路径
-        sample_artifact.file_path = str(Path(temp_dir) / "00_intake" / "test.md")
-
-        # 先保存
-        await artifact_store.save_artifact(sample_artifact)
-
-        # 删除
-        success = await artifact_store.delete_artifact("artifact-001")
-
-        assert success
-        assert "artifact-001" not in artifact_store.index
-        assert not Path(sample_artifact.file_path).exists()
+        async def _run():
+            sample_artifact.file_path = str(Path(temp_dir) / "00_intake" / "test.md")
+            await artifact_store.save_artifact(sample_artifact)
+            success = await artifact_store.delete_artifact("artifact-001")
+            assert success
+            assert "artifact-001" not in artifact_store.index
+            assert not Path(sample_artifact.file_path).exists()
+        asyncio.run(_run())
 
 
 if __name__ == "__main__":

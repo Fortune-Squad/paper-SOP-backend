@@ -6,6 +6,7 @@ Manages HIL tickets for requesting human input during AI execution.
 
 import uuid
 import json
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from pathlib import Path
@@ -20,6 +21,8 @@ from app.models.hil import (
     QuestionType
 )
 from app.config import PROJECTS_PATH
+
+logger = logging.getLogger(__name__)
 
 
 class HILService:
@@ -93,6 +96,16 @@ class HILService:
         with open(project_ticket_path, 'w', encoding='utf-8') as f:
             json.dump(ticket_data, f, indent=2, ensure_ascii=False)
 
+        # v7 Appendix B: also write to projects/{project_id}/hil/tickets/
+        try:
+            v7_ticket_dir = Path(PROJECTS_PATH) / ticket.project_id / "hil" / "tickets"
+            v7_ticket_dir.mkdir(parents=True, exist_ok=True)
+            v7_ticket_path = v7_ticket_dir / f"{ticket.ticket_id}.json"
+            with open(v7_ticket_path, 'w', encoding='utf-8') as f:
+                json.dump(ticket_data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.warning(f"Failed to write v7 HIL ticket: {e}")
+
     async def _load_ticket(self, ticket_id: str) -> Optional[HILTicket]:
         """Load ticket from file"""
         ticket_path = self._get_ticket_path(ticket_id)
@@ -131,7 +144,7 @@ class HILService:
                 ticket_data = json.load(f)
 
             # Convert datetime strings
-            for key in ['created_at', 'answered_at']:
+            for key in ['created_at', 'answered_at', 'expires_at']:
                 if ticket_data.get(key):
                     ticket_data[key] = datetime.fromisoformat(ticket_data[key])
 
@@ -144,10 +157,9 @@ class HILService:
                 continue
 
             # Filter expired tickets if not included
-            if not include_expired and ticket_data.get('timeout_hours'):
-                created_at = ticket_data['created_at']
-                timeout_hours = ticket_data['timeout_hours']
-                if datetime.now() > created_at + timedelta(hours=timeout_hours):
+            if not include_expired:
+                expires_at = ticket_data.get('expires_at')
+                if expires_at and datetime.now() > expires_at:
                     continue
 
             tickets.append(HILTicketSummary(**ticket_data))
@@ -186,6 +198,12 @@ class HILService:
         # Save updated ticket
         await self._save_ticket(ticket)
 
+        # v7 Appendix B: regenerate external inputs aggregation
+        try:
+            await self._generate_external_inputs(ticket.project_id)
+        except Exception as e:
+            logger.warning(f"Failed to generate external inputs: {e}")
+
         return ticket
 
     async def cancel_ticket(self, ticket_id: str) -> HILTicket:
@@ -198,11 +216,9 @@ class HILService:
         if ticket.status != TicketStatus.PENDING:
             raise ValueError(f"Ticket {ticket_id} is not pending (status: {ticket.status})")
 
-        # Update ticket
         ticket.status = TicketStatus.CANCELLED
         ticket.answered_at = datetime.now()
 
-        # Save updated ticket
         await self._save_ticket(ticket)
 
         return ticket
@@ -223,6 +239,58 @@ class HILService:
         """Get all blocking pending tickets for a project"""
         pending = await self.get_pending_tickets(project_id)
         return [t for t in pending if t.blocking]
+
+    async def _generate_external_inputs(self, project_id: str) -> None:
+        """
+        Aggregate all answered tickets into hil/external_inputs/00_External_Inputs.md
+        (v7 Appendix B).
+        """
+        project_dir = self._get_project_tickets_dir(project_id)
+        answered = []
+
+        for ticket_file in project_dir.glob("*.json"):
+            with open(ticket_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if data.get('status') == 'answered':
+                answered.append(data)
+
+        if not answered:
+            return
+
+        # Sort by answered_at
+        answered.sort(key=lambda t: t.get('answered_at', ''))
+
+        lines = [
+            "---",
+            "doc_type: External_Inputs",
+            f"project_id: {project_id}",
+            f"generated_at: {datetime.now().isoformat()}",
+            f"total_answered: {len(answered)}",
+            "---",
+            "",
+            "# External Inputs (HIL Answered Tickets)",
+            "",
+        ]
+
+        for t in answered:
+            lines.append(f"## {t.get('ticket_id', 'unknown')}")
+            lines.append("")
+            lines.append(f"- **Step**: {t.get('step_id', 'N/A')}")
+            lines.append(f"- **Question**: {t.get('question', 'N/A')}")
+            lines.append(f"- **Answer**: {t.get('answer', 'N/A')}")
+            if t.get('explanation'):
+                lines.append(f"- **Explanation**: {t['explanation']}")
+            lines.append(f"- **Answered at**: {t.get('answered_at', 'N/A')}")
+            lines.append("")
+
+        output_dir = Path(PROJECTS_PATH) / project_id / "hil" / "external_inputs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "00_External_Inputs.md"
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
+
+        logger.info(f"Generated external inputs: {output_path} ({len(answered)} tickets)")
 
     async def process_expired_tickets(self) -> Dict[str, int]:
         """Process expired tickets (auto-answer with default or mark as expired)"""

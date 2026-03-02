@@ -1,6 +1,11 @@
 """
 基础步骤类
 所有 SOP 步骤的抽象基类
+
+合规红线 (Compliance Red Lines) — SOP v7 §12
+  1. 不做学术不端/代写代交付 — 不交付可直接投稿的论文正文/作业答案
+  2. 不绕过限额/不轮询多 Key — 扩量只走申请更高额度/企业合同
+  3. 不把闭源模型输出作为可售训练集 — 闭源模型最多用于内部 QA/打分
 """
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, List
@@ -11,7 +16,7 @@ from app.models.document import Document, DocumentMetadata, DocumentType, Docume
 from app.models.project import Project
 from app.models.artifact import Artifact, ArtifactMetadata, ArtifactStatus, CreatedBy
 from app.models.hil import HILTicketCreate, HILTicket, HILTicketAnswer, QuestionType, TicketPriority
-from app.services.ai_client import ChatGPTClient, GeminiClient
+from app.services.ai_client import ChatGPTClient, GeminiClient, ClaudeClient
 from app.services.artifact_store import get_artifact_store
 from app.services.hil_service import HILService
 from app.utils.file_manager import FileManager
@@ -37,9 +42,11 @@ class BaseStep(ABC):
         project: Project,
         chatgpt_client: Optional[ChatGPTClient] = None,
         gemini_client: Optional[GeminiClient] = None,
+        claude_client: Optional[ClaudeClient] = None,
         file_manager: Optional[FileManager] = None,
         vector_store: Optional[VectorStore] = None,
-        git_manager: Optional[GitManager] = None
+        git_manager: Optional[GitManager] = None,
+        structure_version: str = "v7"
     ):
         """
         初始化步骤
@@ -48,18 +55,66 @@ class BaseStep(ABC):
             project: 项目对象
             chatgpt_client: ChatGPT 客户端
             gemini_client: Gemini 客户端
+            claude_client: Claude 客户端 (v1.2: 执行引擎)
             file_manager: 文件管理器
             vector_store: 向量数据库
             git_manager: Git 管理器
+            structure_version: 目录结构版本 ("v4" 或 "v7"，默认v7)
         """
         self.project = project
         self.chatgpt_client = chatgpt_client or ChatGPTClient()
         self.gemini_client = gemini_client or GeminiClient()
-        self.file_manager = file_manager or FileManager()
+        # v1.2: Claude client — executor role for Step 3/4
+        if claude_client is not None:
+            self.claude_client = claude_client
+        else:
+            try:
+                from app.services.ai_client import create_claude_client
+                _claude = create_claude_client()
+                self.claude_client = _claude if _claude.client else self.chatgpt_client
+            except Exception:
+                self.claude_client = self.chatgpt_client
+        self.file_manager = file_manager or FileManager(structure_version=structure_version)
         self.vector_store = vector_store or VectorStore()
         self.git_manager = git_manager or GitManager()
         self.artifact_store = get_artifact_store()
         self.hil_service = HILService()
+        self.structure_version = structure_version
+
+    def get_project_context_injection(self) -> str:
+        """
+        v7.1: 获取 AGENTS.md + MEMORY.md + sop/rules/ 上下文注入内容
+
+        Returns:
+            str: 拼接后的上下文字符串，失败返回空字符串
+        """
+        try:
+            from app.services.prompt_pack_compiler import inject_agents_md, inject_memory_md
+            from app.config import settings
+            agents_content = inject_agents_md(self.project.project_id)
+            memory_content = inject_memory_md(self.project.project_id)
+            parts = []
+            if agents_content and agents_content != "(AGENTS.md not found)":
+                parts.append(f"\n## Project Context (AGENTS.md)\n{agents_content}\n")
+            if memory_content and memory_content != "(MEMORY.md empty)":
+                parts.append(f"\n## Project Memory (MEMORY.md)\n{memory_content}\n")
+
+            # §2.2.8: 追加 sop/rules/ 内容
+            rules_dir = Path(settings.projects_path) / self.project.project_id / "sop" / "rules"
+            if not rules_dir.exists():
+                rules_dir = Path(__file__).parent.parent.parent / "sop" / "rules"
+            if rules_dir.exists():
+                for rule_file in sorted(rules_dir.glob("*.md")):
+                    try:
+                        content = rule_file.read_text(encoding="utf-8")[:500]
+                        parts.append(f"\n## Rule: {rule_file.stem}\n{content}\n")
+                    except Exception:
+                        pass
+
+            return "".join(parts)
+        except Exception as e:
+            logger.warning(f"Failed to inject project context: {e}")
+            return ""
 
     @property
     @abstractmethod
@@ -312,14 +367,28 @@ class BaseStep(ABC):
         except Exception as e:
             logger.warning(f"Failed to log AI conversation: {e}")
 
-    def get_artifact_path(self) -> Path:
+    def get_artifact_path(self, doc_type: Optional[DocumentType] = None) -> Path:
         """
         获取 artifact 文件路径
+
+        v4 模式: artifacts/{project_id}/{step_id}.md
+        v7 模式: projects/{project_id}/artifacts/{category}/{filename}
+
+        Args:
+            doc_type: 文档类型，如果为 None 则使用 self.output_doc_type
 
         Returns:
             Path: artifact 文件路径
         """
-        return Path(f"artifacts/{self.project.project_id}/{self.step_id}.md")
+        target_doc_type = doc_type or self.output_doc_type
+        if self.structure_version == "v7":
+            # v7: Use v7_path_mapping
+            from app.config.v7_path_mapping import get_v7_path
+            category, filename = get_v7_path(target_doc_type)
+            return Path(f"projects/{self.project.project_id}/artifacts/{category}/{filename}")
+        else:
+            # v4: Legacy flat structure
+            return Path(f"artifacts/{self.project.project_id}/{self.step_id}.md")
 
     def ai_model_to_created_by(self) -> CreatedBy:
         """
@@ -364,7 +433,7 @@ class BaseStep(ABC):
                     project_id=self.project.project_id
                 ),
                 content=content,
-                file_path=str(self.get_artifact_path())
+                file_path=str(self.get_artifact_path(doc_type))
             )
             await self.artifact_store.save_artifact(artifact)
             logger.info(f"Saved artifact to store: {artifact.id}")

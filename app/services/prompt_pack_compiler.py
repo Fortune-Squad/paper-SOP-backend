@@ -4,13 +4,28 @@ Prompt Pack Compiler
 从 Artifact Store 编译 prompt，避免 prompt drift
 
 v6.0 NEW: Artifact-driven prompt generation
+v1.2 §13.3: 新增 memory_entries, north_star 参数 + READINESS_ASSESSMENT prompt_type
 """
 import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
+from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+class PromptType(str, Enum):
+    """v1.2 §13.3: Prompt 类型枚举"""
+    EXECUTE = "execute"
+    REVIEW_ACCEPTANCE = "review_acceptance"
+    REVIEW_FIX = "review_fix"
+    DIAGNOSE = "diagnose"
+    ASSEMBLY_KIT = "assembly_kit"
+    FIGURE_GEN = "figure_gen"
+    READINESS_ASSESSMENT = "readiness_assessment"  # v1.2 新增
+    PAPER_DRAFT = "paper_draft"
+    GENERIC = "generic"
 
 
 class PromptTemplate:
@@ -21,7 +36,8 @@ class PromptTemplate:
         template_id: str,
         template_text: str,
         required_artifacts: List[str],
-        optional_artifacts: List[str] = None
+        optional_artifacts: List[str] = None,
+        prompt_type: PromptType = PromptType.GENERIC  # v1.2 §13.3
     ):
         """
         初始化 Prompt 模板
@@ -31,11 +47,13 @@ class PromptTemplate:
             template_text: 模板文本（支持 {artifact_name} 占位符）
             required_artifacts: 必需的 artifact 列表
             optional_artifacts: 可选的 artifact 列表
+            prompt_type: Prompt 类型（v1.2 新增）
         """
         self.template_id = template_id
         self.template_text = template_text
         self.required_artifacts = required_artifacts
         self.optional_artifacts = optional_artifacts or []
+        self.prompt_type = prompt_type  # v1.2 §13.3
 
     def get_placeholders(self) -> List[str]:
         """获取模板中的所有占位符"""
@@ -111,7 +129,9 @@ class PromptPackCompiler:
         template_id: str,
         project_id: str,
         artifact_overrides: Optional[Dict[str, str]] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        memory_entries: Optional[str] = None,  # v1.2 §13.3 新增
+        north_star: Optional[str] = None  # v1.2 §13.3 新增
     ) -> PromptPack:
         """
         编译 Prompt
@@ -121,6 +141,8 @@ class PromptPackCompiler:
             project_id: 项目 ID
             artifact_overrides: Artifact 覆盖（artifact_id -> content）
             context: 额外上下文
+            memory_entries: MEMORY.md 相关条目（v1.2 §13.3）
+            north_star: 北极星问题（v1.2 §13.3，用于 READINESS_ASSESSMENT）
 
         Returns:
             PromptPack: 编译后的 Prompt Pack
@@ -170,6 +192,12 @@ class PromptPackCompiler:
         # 添加额外上下文
         if context:
             artifacts.update(context)
+
+        # v1.2 §13.3: 添加 memory_entries 和 north_star
+        if memory_entries:
+            artifacts['memory_entries'] = memory_entries
+        if north_star:
+            artifacts['north_star'] = north_star
 
         # 编译 prompt
         try:
@@ -248,7 +276,53 @@ class PromptPackCompiler:
         return list(self.templates.keys())
 
 
-# 全局 Compiler 实例
+def inject_agents_md(project_id: str) -> str:
+    """
+    v7.1: 读取项目 AGENTS.md 内容用于 prompt 注入
+
+    Args:
+        project_id: 项目 ID
+
+    Returns:
+        str: AGENTS.md 内容（截断至 3500 tokens ≈ 10500 chars）
+    """
+    from app.config import settings
+    agents_path = Path(settings.projects_path) / project_id / "AGENTS.md"
+    if not agents_path.exists():
+        return "(AGENTS.md not found)"
+    content = agents_path.read_text(encoding="utf-8")
+    # Token budget: < 3500 tokens ≈ 10500 chars
+    if len(content) > 10500:
+        content = content[:10500] + "\n... (truncated)"
+    return content
+
+
+def inject_memory_md(project_id: str, tags: Optional[List[str]] = None) -> str:
+    """
+    v7.1: 读取项目 MEMORY.md 内容用于 prompt 注入
+
+    Args:
+        project_id: 项目 ID
+        tags: 可选的 domain tag 过滤列表
+
+    Returns:
+        str: MEMORY.md 内容或过滤后的条目（截断至 500 tokens ≈ 1500 chars）
+    """
+    from app.services.memory_store import MemoryStore
+    from app.config import settings
+    project_path = str(Path(settings.projects_path) / project_id)
+    store = MemoryStore(project_path)
+    if tags:
+        entries = store.get_relevant_entries(tags)
+        content = "\n".join(entries) if entries else "(No relevant MEMORY entries)"
+    else:
+        content = store.get_all_entries_formatted()
+        if not content:
+            content = "(MEMORY.md empty)"
+    # Token budget: < 500 tokens ≈ 1500 chars
+    if len(content) > 1500:
+        content = content[:1500] + "\n... (truncated)"
+    return content
 _compiler_instance = None
 
 

@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ app/
 COPY workflows/ workflows/
+COPY sop/ sop/
 
 # 数据目录由 volume 挂载，不在此创建
 ENV PYTHONUNBUFFERED=1

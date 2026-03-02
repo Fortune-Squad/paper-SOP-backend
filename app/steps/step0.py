@@ -60,7 +60,7 @@ class Step0_1_IntakeCard(BaseStep):
 
             # 暂时使用 Gemini 替代 ChatGPT（因为 TokHub 的 ChatGPT 模型权限问题）
             # IMPORTANT: Use DISABLED mode for Step 0.1 because it requires YAML front-matter (format conflict with Agentic Wrapper)
-            logger.info("Calling Gemini to generate Project Intake Card (Agentic Wrapper DISABLED for YAML format)")
+            logger.info("Calling Gemini to generate Project Intake Card (Agentic Wrapper meta_tail for YAML format)")
 
             system_prompt = "You are an experienced research PI and paper architect. Your task is to create a comprehensive Project Intake Card for a new research project."
 
@@ -70,7 +70,7 @@ class Step0_1_IntakeCard(BaseStep):
                     context=[],
                     system_prompt=system_prompt,
                     max_tokens=8192,  # 增加输出空间以支持长篇输出
-                    wrapper_mode="disabled"  # DISABLED: Step requires YAML front-matter (format conflict)
+                    wrapper_mode="meta_tail"  # meta_tail: YAML format + quality control without conflict
                 )
 
                 # 记录 AI 对话
@@ -82,9 +82,9 @@ class Step0_1_IntakeCard(BaseStep):
                     response=content,
                     metadata={
                         "step_name": self.step_name,
-                        "agentic_wrapper_mode": "disabled",
+                        "agentic_wrapper_mode": "meta_tail",
                         "max_tokens": 8192,
-                        "reason": "YAML front-matter format conflict"
+                        "reason": "meta_tail preserves YAML format + quality control"
                     }
                 )
             except Exception as e:
@@ -186,14 +186,14 @@ class Step0_2_VenueTaste(BaseStep):
 
             # 调用 Gemini
             # IMPORTANT: Use DISABLED mode for Step 0.2 because output is long (>5000 chars)
-            logger.info("Calling Gemini to generate Venue Taste Notes (Agentic Wrapper DISABLED for long output)")
+            logger.info("Calling Gemini to generate Venue Taste Notes (Agentic Wrapper meta_tail for long output)")
 
             try:
                 response = await self.gemini_client.chat(
                     prompt=full_prompt,
                     context=context,
                     max_tokens=8192,  # 增加输出空间以支持长篇输出
-                    wrapper_mode="disabled"  # DISABLED: Long output (>5000 chars)
+                    wrapper_mode="meta_tail"  # meta_tail: long output + quality control
                 )
 
                 # 记录 AI 对话
@@ -206,9 +206,9 @@ class Step0_2_VenueTaste(BaseStep):
                     metadata={
                         "step_name": self.step_name,
                         "intake_card_included": True,
-                        "agentic_wrapper_mode": "disabled",
+                        "agentic_wrapper_mode": "meta_tail",
                         "max_tokens": 8192,
-                        "reason": "Long output (>5000 chars)"
+                        "reason": "meta_tail for long output + quality control"
                     }
                 )
             except Exception as e:

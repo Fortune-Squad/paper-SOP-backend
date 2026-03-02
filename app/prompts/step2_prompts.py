@@ -4,77 +4,110 @@ Step 2 阶段的所有提示词模板
 """
 
 
+# v7 SOP 6.9 [S5a] Full Proposal — ChatGPT
 def render_step_2_1_prompt(selected_topic_content: str, frozen_claims_content: str,
-                           target_venue: str) -> str:
+                           target_venue: str, mvs_content: str = "") -> str:
     """
     渲染 Step 2.1 Prompt: Full Proposal (ChatGPT)
+    v7 SOP 6.9 — PI role, 5 required sections
 
     Args:
         selected_topic_content: Selected Topic 内容
         frozen_claims_content: Frozen Claims 内容
         target_venue: 目标期刊
+        mvs_content: Minimal Verification Set 内容（可选）
 
     Returns:
         str: 渲染后的 prompt
     """
-    prompt = f"""Topic is frozen. You are the PI. Write a full Research Proposal (the constitution).
+    mvs_section = ""
+    if mvs_content:
+        mvs_section = f"""
 
-Target venue: {target_venue}
+## Minimal Verification Set:
+{mvs_content}
+
+Use the MVS to ensure the proposal's evaluation design covers all required verification units.
+"""
+
+    prompt = f"""You are the PI.
+
+## Task
+Write a full Research Proposal — the "constitution" of this project.
+
+## Input
+- `01_Selected_Topic.md` — attached below.
+- `01_Claims_and_NonClaims.md` (frozen) — attached below.
+- `01_Minimal_Verification_Set.md` — attached below.
 
 ## Selected Topic:
 {selected_topic_content}
 
 ## Frozen Claims and NonClaims:
 {frozen_claims_content}
+{mvs_section}
+## Must Include (all five sections)
 
-## Must include:
+### 1. System/Study Model
+Formal definitions, endpoints, time axis, cohorts/sim setup.
 
-1) **System/Study Model** (formal definitions; endpoints; time axis; cohorts/sim setup).
+### 2. Core Method
+Math/stat/algorithm logic (NOT just pseudocode — show the math).
 
-2) **Main method** (math/stat/algorithm logic; NOT just pseudocode).
+### 3. Evaluation Design
+- Baselines (>=2) with fairness justification
+- Ablations
+- Robustness checks (>=6 for Top-Journal, >=3 for Fast-Track, prioritized by likely reviewer attacks)
 
-3) **Evaluation design:**
-   - baselines (>=2) with fairness justification
-   - ablations
-   - robustness checks (>=6, prioritized by likely reviewer attacks)
+### 4. Uncertainty / Statistical Reporting Plan
+CI/bootstrap/etc as appropriate.
 
-4) **Uncertainty / statistical reporting plan** (CI/bootstrap/etc as appropriate).
+### 5. Claim-to-Evidence Map
+Each claim → specific figure/table/test that proves it.
 
-5) **Claim-to-Evidence map:** each claim points to specific figure/table/tests.
+## Output Format
+File: `02_Full_Proposal.md`
 
-## YAML Front-Matter Requirements
-
-Your output MUST begin with the following YAML front-matter (fill in the bracketed values):
-
+Begin with YAML front-matter:
 ```yaml
 ---
-doc_type: "02_Full_Proposal"
+doc_type: FullProposal
 version: "0.1"
-status: "draft"
-created_by: "ChatGPT"
+status: draft
+created_by: ChatGPT
 target_venue: "{target_venue}"
-topic: "[One-line summary from selected topic]"
-inputs:
-  - "01_Selected_Topic.md"
-  - "01_Claims_and_NonClaims.md"
-  - "02_Figure_Table_List.md"
-outputs:
-  - "02_Full_Proposal.md"
-gate_relevance: "Gate 2"
+topic: "[One-line summary]"
+gate_relevance: Gate2
 ---
 ```
 
-After the YAML front-matter, provide the complete document content including all required sections (1-5).
-
-Output as a comprehensive markdown document (02_Full_Proposal.md).
+Then provide all 5 sections above as a comprehensive markdown document.
 """
 
     return prompt
 
 
+# ============================================================
+# LEGACY: Step 2.1 Prompt (SOP v4.0) — 保留用于对比
+# ============================================================
+# def render_step_2_1_prompt_v4_legacy(selected_topic_content, frozen_claims_content,
+#                            target_venue, mvs_content=""):
+#     prompt = f"""Topic is frozen. You are the PI. Write a full Research Proposal (the constitution).
+#     Target venue: {target_venue}
+#     ## Selected Topic: {selected_topic_content}
+#     ## Frozen Claims: {frozen_claims_content}
+#     ## Must include: 1) System/Study Model 2) Main method 3) Evaluation design
+#     4) Uncertainty/statistical reporting 5) Claim-to-Evidence map
+#     ## YAML Front-Matter with doc_type: "02_Full_Proposal"
+#     """
+#     return prompt
+
+
+# v7 SOP 6.10 [S5b] Data / Simulation Spec — ChatGPT
 def render_step_2_2_prompt(full_proposal_content: str) -> str:
     """
     渲染 Step 2.2 Prompt: Data/Simulation Spec (ChatGPT)
+    v7 SOP 6.10 — PI / Data Architect role, 5 required sections
 
     Args:
         full_proposal_content: Full Proposal 内容
@@ -82,54 +115,71 @@ def render_step_2_2_prompt(full_proposal_content: str) -> str:
     Returns:
         str: 渲染后的 prompt
     """
-    prompt = f"""Translate the proposal into an engineering-grade Data/Simulation Spec.
+    prompt = f"""You are the PI / Data Architect.
+
+## Task
+Translate the proposal into an engineering-grade Data/Simulation Spec.
+
+## Input
+- `02_Full_Proposal.md` + any data dictionary available — attached below.
 
 ## Full Proposal:
 {full_proposal_content}
 
-## Include:
+## Must Include (all five sections)
 
-1) **Table(s) / parameter schema**
+### 1. Table(s) / Parameter Schema
 
-2) **For each field:** definition, unit, range, missingness rule, cleaning rule
+### 2. Field Definitions
+For each field: definition, unit, range, missingness rule, cleaning rule.
 
-3) **Derived variables:** formulas + edge cases
+### 3. Derived Variables
+Formulas + edge cases.
 
-4) **Alignment rules:** join keys, timepoint matching, multi-source merging
+### 4. Alignment Rules
+Join keys, timepoint matching, multi-source merging.
 
-5) **QC rules:** outlier detection & exclusion criteria (reproducible)
+### 5. QC Rules
+Outlier detection & exclusion criteria (reproducible).
 
-## YAML Front-Matter Requirements
+## Output Format
+File: `02_Data_or_Sim_Spec.md`
 
-Your output MUST begin with the following YAML front-matter (fill in the bracketed values):
-
+Begin with YAML front-matter:
 ```yaml
 ---
-doc_type: "02_Data_or_Sim_Spec"
+doc_type: DataOrSimSpec
 version: "0.1"
-status: "draft"
-created_by: "ChatGPT"
-target_venue: "[Extract from full proposal]"
-topic: "[One-line summary from full proposal]"
-inputs:
-  - "02_Full_Proposal.md"
-outputs:
-  - "02_Data_or_Sim_Spec.md"
-gate_relevance: "Gate 2"
+status: draft
+created_by: ChatGPT
+gate_relevance: Gate2
 ---
 ```
 
-After the YAML front-matter, provide the complete document content including all required sections (1-5).
-
-Output as a comprehensive markdown document (02_Data_or_Sim_Spec.md).
+Then provide all 5 sections above.
 """
 
     return prompt
 
 
+# ============================================================
+# LEGACY: Step 2.2 Prompt (SOP v4.0) — 保留用于对比
+# ============================================================
+# def render_step_2_2_prompt_v4_legacy(full_proposal_content):
+#     prompt = f"""Translate the proposal into an engineering-grade Data/Simulation Spec.
+#     ## Full Proposal: {full_proposal_content}
+#     ## Include: 1) Table(s)/parameter schema 2) Field definitions 3) Derived variables
+#     4) Alignment rules 5) QC rules
+#     ## YAML Front-Matter with doc_type: "02_Data_or_Sim_Spec"
+#     """
+#     return prompt
+
+
+# v7 SOP 6.11 [S5c] Engineering Spec + TestPlan — ChatGPT
 def render_step_2_3_prompt(full_proposal_content: str, data_spec_content: str = "") -> str:
     """
-    渲染 Step 2.3 Prompt: Engineering Decomposition (ChatGPT)
+    渲染 Step 2.3 Prompt: Engineering Spec + TestPlan (ChatGPT)
+    v7 SOP 6.11 — PI / Systems Architect role
 
     Args:
         full_proposal_content: Full Proposal 内容
@@ -138,7 +188,14 @@ def render_step_2_3_prompt(full_proposal_content: str, data_spec_content: str = 
     Returns:
         str: 渲染后的 prompt
     """
-    prompt = f"""Decompose the proposal into independent engineering modules (for Claude to implement).
+    prompt = f"""You are the PI / Systems Architect.
+
+## Task
+Decompose the proposal into independent engineering modules (for Claude to implement in Step 3).
+
+## Input
+- `02_Full_Proposal.md` — attached below.
+- `02_Data_or_Sim_Spec.md` — attached below.
 
 ## Full Proposal:
 {full_proposal_content}
@@ -151,76 +208,60 @@ def render_step_2_3_prompt(full_proposal_content: str, data_spec_content: str = 
 
 """
 
-    prompt += """## IMPORTANT - Output Format:
+    prompt += """## Engineering Spec Must Include
 
-You MUST output TWO separate markdown documents with clear delimiters. Each document MUST begin with its own YAML front-matter:
+### 1. Global Parameters
+Defaults + sweep ranges + random seeds policy.
 
-**For 03_Engineering_Spec.md:**
-```yaml
----
-doc_type: "03_Engineering_Spec"
-version: "0.1"
-status: "draft"
-created_by: "ChatGPT"
-target_venue: "[Extract from full proposal]"
-topic: "[One-line summary from full proposal]"
-inputs:
-  - "02_Full_Proposal.md"
-  - "02_Data_or_Sim_Spec.md"
-outputs:
-  - "03_Engineering_Spec.md"
-gate_relevance: "Gate 2"
----
-```
+### 2. Ordered Module Breakdown
+For each module:
+- Module ID + purpose
+- Inputs (shape/type/unit)
+- Outputs (shape/type/unit)
+- Verification logic (unit tests + invariants)
 
-**For 03_TestPlan.md:**
-```yaml
----
-doc_type: "03_TestPlan"
-version: "0.1"
-status: "draft"
-created_by: "ChatGPT"
-target_venue: "[Extract from full proposal]"
-topic: "[One-line summary from full proposal]"
-inputs:
-  - "02_Full_Proposal.md"
-  - "03_Engineering_Spec.md"
-outputs:
-  - "03_TestPlan.md"
-gate_relevance: "Gate 2"
----
-```
+### 3. End-to-End Sanity Checks
+Minimum 5 sanity checks.
+
+### 4. Reproducibility
+- Directory layout
+- Run commands
+- Artifact paths (figures/tables/logs)
+
+## TestPlan Must Include
+For each test:
+- Test ID
+- What it verifies
+- Expected PASS criteria
+- Dependencies (which module must pass first)
+
+## Output Format
+Two files with YAML front-matter (gate_relevance: Gate2):
 
 ---DOCUMENT_1: 03_Engineering_Spec.md---
-[Content for Engineering Spec containing:
-
-1) **Global parameters** (defaults + sweep ranges + random seeds policy)
-
-2) **Ordered module breakdown:**
-   - Module ID, purpose
-   - Inputs (shape/type/unit), Outputs (shape/type/unit)
-   - Verification logic (unit tests + invariants)
-
-3) **End-to-end sanity checks**
-
-4) **Reproducibility:**
-   - directory layout
-   - run commands
-   - artifact paths (figures/tables/logs)]
+```yaml
+---
+doc_type: EngineeringSpec
+version: "0.1"
+status: draft
+created_by: ChatGPT
+gate_relevance: Gate2
+---
+```
+[Engineering Spec content with sections 1-4]
 ---END_DOCUMENT_1---
 
 ---DOCUMENT_2: 03_TestPlan.md---
-[Content for Test Plan containing:
-- List of all tests (unit tests, integration tests, end-to-end tests)
-- For each test:
-  - Test ID
-  - Purpose
-  - Inputs
-  - Expected outputs
-  - PASS criteria
-  - FAIL criteria
-- Test execution order
-- Dependencies between tests]
+```yaml
+---
+doc_type: TestPlan
+version: "0.1"
+status: draft
+created_by: ChatGPT
+gate_relevance: Gate2
+---
+```
+[TestPlan content with test list]
 ---END_DOCUMENT_2---
 
 Each document should be complete and standalone.
@@ -229,157 +270,156 @@ Each document should be complete and standalone.
     return prompt
 
 
+# ============================================================
+# LEGACY: Step 2.3 Prompt (SOP v4.0) — 保留用于对比
+# ============================================================
+# def render_step_2_3_prompt_v4_legacy(full_proposal_content, data_spec_content=""):
+#     prompt = f"""Decompose the proposal into independent engineering modules (for Claude to implement).
+#     ## Full Proposal: {full_proposal_content}
+#     ## Data/Simulation Spec: {data_spec_content}
+#     ## Output TWO documents: 03_Engineering_Spec.md (global params, module breakdown,
+#     ##   sanity checks, reproducibility) + 03_TestPlan.md (test list with ID/purpose/PASS/FAIL)
+#     """
+#     return prompt
+
+
+# v7 SOP 6.12 [S6] Red Team Review — Gemini
+# Agentic Wrapper is handled by wrapper_mode parameter, NOT inlined in prompt.
 def render_step_2_4_prompt(full_proposal_content: str, engineering_spec_content: str,
-                           target_venue: str) -> str:
+                           target_venue: str, frozen_claims_content: str = "",
+                           mvs_content: str = "", test_plan_content: str = "",
+                           killer_prior_content: str = "") -> str:
     """
-    渲染 Step 2.4 Prompt: Reviewer #2 Red-Team (Gemini)
+    渲染 Step 2.4 Prompt: Red Team Review (Gemini)
+    v7 SOP 6.12 — Reviewer #2 (Hostile but Constructive) role, 3 actions
 
     Args:
         full_proposal_content: Full Proposal 内容
         engineering_spec_content: Engineering Spec 内容
         target_venue: 目标期刊
+        frozen_claims_content: Frozen Claims 内容（v7 必须）
+        mvs_content: Minimal Verification Set 内容（v7 必须）
+        test_plan_content: Test Plan 内容（v7 必须）
+        killer_prior_content: Killer Prior Check 内容（v7 必须）
 
     Returns:
         str: 渲染后的 prompt
     """
-    prompt = f"""You are Reviewer #2 (strict). Review the proposal + engineering spec.
+    # 构建可选输入段
+    claims_section = ""
+    if frozen_claims_content:
+        claims_section = f"""
+## Frozen Claims and NonClaims:
+{frozen_claims_content}
 
-**CRITICAL: AGENTIC-FIRST / EVIDENCE-FIRST RULES (SOP v4.0):**
-1) 先列 Plan（最多 6 步），再执行审查/分析，再输出产物；不要先写结论。
-2) 每个关键判断必须给 Evidence（引用 proposal 或 engineering spec 中的具体章节）。
-3) 不允许占位符或模糊引用；若找不到就标记 UNKNOWN 并降级结论。
-4) 输出必须结构化、短句、可被脚本解析；禁止把整篇正文包进 ```markdown``` 代码块。
-5) 最后必须给：Risk list（>=5）+ What to verify（>=5）+ Confidence（0-1）。
+"""
+
+    mvs_section = ""
+    if mvs_content:
+        mvs_section = f"""
+## Minimal Verification Set:
+{mvs_content}
+
+"""
+
+    test_plan_section = ""
+    if test_plan_content:
+        test_plan_section = f"""
+## Test Plan:
+{test_plan_content}
+
+"""
+
+    killer_prior_section = ""
+    if killer_prior_content:
+        killer_prior_section = f"""
+## Killer Prior Check (Top 5 Prior):
+{killer_prior_content}
+
+"""
+
+    prompt = f"""You are Reviewer #2 (Hostile but Constructive).
+
+## Task
+Find fatal weaknesses. Output must be ACTIONABLE patches, not vague criticism.
+
+## Input (Review Packet — all must be read before responding)
+- `01_Claims_and_NonClaims.md` (frozen claims)
+- `01_Minimal_Verification_Set.md`
+- `02_Full_Proposal.md`
+- `03_Engineering_Spec.md`
+- `03_TestPlan.md`
+- `01_Killer_Prior_Check.md` (Top 5 prior)
 
 Target venue: {target_venue}
 
-## Full Proposal:
+{claims_section}{mvs_section}## Full Proposal:
 {full_proposal_content}
 
 ## Engineering Spec:
 {engineering_spec_content}
+{test_plan_section}{killer_prior_section}
+## Actions (complete all three)
 
-## Output (MUST be structured, no long essay):
+### 1. Fatal Issues (Ranked)
+List up to 20 most fatal issues (ranked by severity). For each:
+- Why fatal (cite specific claim/figure/test)
+- Whether already addressed in the spec
+- What minimal fix is needed
 
-## 0) Plan
-List 3-6 steps you will take to complete this Red-Team Review:
-- Step 1: [action - e.g., extract main claims from proposal]
-- Step 2: [action - e.g., identify evaluation gaps]
-- Step 3: [action - e.g., check baseline fairness]
-- Step 4: [action - e.g., assess robustness checks]
-- Step 5: [action - e.g., rank fatal issues]
-- Step 6: [action - e.g., generate minimal patch set]
+### 2. Minimal Patch Set
+Provide a minimal patch set (Top-Journal: <=5, Fast-Track: <=3). Each patch must specify:
+- Which artifact to modify (file path)
+- What to add/change (specific figure/table/definition/robustness check)
+- Verifiable DoD for the patch
 
-## 1) Actions Taken
-Document what you actually did:
-- Reviewed: [sections of proposal and engineering spec]
-- Identified: [number] potential issues
-- Ranked: [number] fatal issues
-- Generated: [number] patches
+### 3. Observations
+Issues without actionable patches are logged as "observations" — they do NOT block the gate.
 
-## 2) Evidence Validation
-For each key issue identified, provide:
-- Issue: [description]
-- Evidence: [specific section/claim from proposal or engineering spec]
-- Severity: FATAL / MAJOR / MINOR
-- Status: VERIFIED / NEEDS_VERIFICATION
+## Output Format
+File: `03_RedTeam_Reviewer2.md`
 
-## 3) Deliverables
-
-### A) Fatal Issues (Ranked)
-
-**List 20 most fatal issues (ranked by severity):**
-
-For each issue:
-- **Issue ID**: [e.g., FATAL-01]
-- **Description**: [What is the problem?]
-- **Evidence**: [Which section of proposal/engineering spec reveals this issue?]
-- **Why Fatal**: [Why would this cause rejection at {target_venue}?]
-- **Already Covered**: [YES/NO - Is this already addressed in the proposal?]
-- **Minimal Fix**: [What specific change is needed? E.g., "Add Figure X showing Y", "Tighten definition of Z", "Add robustness check for W"]
-
-### B) Minimal Patch Set (<=5 items)
-
-Based on the fatal issues, provide a minimal patch set:
-
-**Patch 1:**
-- **Addresses Issues**: [List issue IDs, e.g., FATAL-01, FATAL-03]
-- **Change Required**: [Specific action - e.g., "Add baseline comparison with method X"]
-- **Impact**: [Which sections need updating - e.g., "Section 3.2, Figure 2, Table 1"]
-- **Priority**: HIGH / MEDIUM / LOW
-
-**Patch 2:**
-[Same structure]
-
-**Patch 3:**
-[Same structure]
-
-**Patch 4:**
-[Same structure]
-
-**Patch 5:**
-[Same structure]
-
-## 4) Risks
-List >=5 risks identified during Red-Team Review:
-- Risk 1: [e.g., Baseline X may not be available for comparison]
-- Risk 2: [e.g., Robustness check Y requires additional data not specified]
-- Risk 3: [e.g., Statistical test Z may not be sufficient for {target_venue} standards]
-- Risk 4: [e.g., Claim 3 lacks sufficient evidence in current figure set]
-- Risk 5: [e.g., Engineering spec missing implementation details for module M]
-- ...
-
-## 5) Verification Checklist
-List >=5 items that need verification before proceeding:
-- [ ] Item 1: [e.g., Confirm baseline X is implementable with available resources]
-- [ ] Item 2: [e.g., Verify that robustness check Y is standard for {target_venue}]
-- [ ] Item 3: [e.g., Check if additional figures are needed for Claim 3]
-- [ ] Item 4: [e.g., Validate that engineering spec covers all proposal requirements]
-- [ ] Item 5: [e.g., Ensure all fatal issues have corresponding patches]
-- ...
-
-## 6) Confidence Score
-Overall confidence in this Red-Team Review: [0.0-1.0]
-- Issue identification: [0.0-1.0] (how thoroughly we reviewed)
-- Evidence quality: [0.0-1.0] (% of issues with clear evidence)
-- Patch effectiveness: [0.0-1.0] (how well patches address fatal issues)
-- Venue alignment: [0.0-1.0] (how well review matches {target_venue} standards)
-
-## YAML Front-Matter Requirements
-
-Your output MUST begin with the following YAML front-matter (fill in the bracketed values):
-
+Begin with YAML front-matter:
 ```yaml
 ---
-doc_type: "03_RedTeam_Reviewer2"
+doc_type: RedTeamReviewer2
 version: "0.1"
-status: "draft"
-created_by: "Gemini"
+status: draft
+created_by: Gemini
 target_venue: "{target_venue}"
-topic: "[One-line summary from full proposal]"
-inputs:
-  - "02_Full_Proposal.md"
-  - "03_Engineering_Spec.md"
-outputs:
-  - "03_RedTeam_Reviewer2.md"
-gate_relevance: "Gate 2"
+gate_relevance: Gate2
 ---
 ```
 
-After the YAML front-matter, provide the complete document content following the structure above (sections 0-6).
-
-Output as a comprehensive markdown document (03_RedTeam_Reviewer2.md).
-
-**REMINDER**: Do NOT wrap the entire output in ```markdown``` code blocks. Output should be direct markdown content.
+Then provide all 3 sections above.
 """
 
     return prompt
 
 
+# ============================================================
+# LEGACY: Step 2.4 Prompt (SOP v4.0) — 保留用于对比
+# ============================================================
+# def render_step_2_4_prompt_v4_legacy(full_proposal_content, engineering_spec_content,
+#                            target_venue, frozen_claims_content="", mvs_content="",
+#                            test_plan_content="", killer_prior_content=""):
+#     prompt = f"""You are Reviewer #2 (strict). Review the complete Review Packet.
+#     **CRITICAL: AGENTIC-FIRST / EVIDENCE-FIRST RULES (SOP v4.0):**
+#     1) 先列 Plan ... 2) Evidence ... 3) 不允许占位符 ... 4) 结构化 ... 5) Risk list + Confidence
+#     ROLE: Reviewer #2 (Hostile but Constructive)
+#     TASK: Find fatal weaknesses. Output ACTIONABLE patches.
+#     ## Output: sections 0-6 (Plan, Actions, Evidence, Deliverables with Fatal Issues
+#     ##   + Minimal Patch Set, Risks, Verification, Confidence)
+#     """
+#     return prompt
+
+
+# v7 SOP 6.14 [S7] Plan Freeze — ChatGPT
 def render_step_2_5_prompt(full_proposal_content: str, engineering_spec_content: str,
                            redteam_content: str, frozen_claims_content: str) -> str:
     """
     渲染 Step 2.5 Prompt: Plan Freeze Package (ChatGPT)
+    v7 SOP 6.14 — PI role, 5 actions
 
     Args:
         full_proposal_content: Full Proposal 内容
@@ -390,7 +430,13 @@ def render_step_2_5_prompt(full_proposal_content: str, engineering_spec_content:
     Returns:
         str: 渲染后的 prompt
     """
-    prompt = f"""Create the Plan Freeze package.
+    prompt = f"""You are the PI.
+
+## Task
+Create the Plan Freeze package. This is the final deliverable of Step 0-2.
+
+## Input
+All artifacts from S0-S6, especially post-patch versions — attached below.
 
 ## Frozen Claims:
 {frozen_claims_content}
@@ -404,130 +450,101 @@ def render_step_2_5_prompt(full_proposal_content: str, engineering_spec_content:
 ## Red Team Review:
 {redteam_content}
 
-## Tasks:
+## Actions (complete all five)
 
-1) **Compile the final frozen plan:**
-   - claims + non-claims
-   - figure/table list
-   - method + evaluation + robustness + subgroup plan
-   - baselines + ablations
+### 1. Compile the Final Frozen Plan
+- Frozen claims + non-claims
+- Figure/table list (each mapped to claim + reviewer attack)
+- Method + evaluation + robustness + ablation plan
+- Baselines
 
-2) **Add Stop/Pivot checkpoints (3–5):**
-   - after which key deliverables we decide go / pivot / stop
+### 2. Add Stop/Pivot Checkpoints (>=3)
+- After which key deliverables we decide go / pivot / stop
+- Concrete thresholds for each decision
 
-3) **Add versioning rules:**
-   execution cannot add new modules unless the plan version increments and re-passes Gate 2.
+### 3. Add Execution Order
+- Which modules to build first (highest-risk or most-validating first)
 
-4) **Reference Killer Prior Check:**
-   - IMPORTANT: Include a section that references the Killer Prior Check (Gate 1.5) PASS result
-   - Summarize how this research differentiates from prior work
-   - This is MANDATORY for Gate 2 to pass
+### 4. Add Versioning Rules
+- Execution cannot add new modules unless the plan version increments and re-passes Gate 2.
 
-## YAML Front-Matter Requirements
+### 5. Reference All Gate Results
+- Gate 0/1/1.5/1.6/2 PASS evidence
+- Killer Prior Check differentiation summary (MANDATORY for Gate 2)
 
-You MUST output THREE separate markdown documents with clear delimiters. Each document MUST begin with its own YAML front-matter:
-
-**For 04_Research_Plan_FROZEN.md:**
-```yaml
----
-doc_type: "04_Research_Plan_FROZEN"
-version: "1.0"
-status: "frozen"
-created_by: "ChatGPT"
-target_venue: "[Extract from full proposal]"
-topic: "[One-line summary from frozen claims]"
-inputs:
-  - "01_Claims_and_NonClaims.md"
-  - "02_Full_Proposal.md"
-  - "03_Engineering_Spec.md"
-  - "03_RedTeam_Reviewer2.md"
-  - "01_Killer_Prior_Check.md"
-outputs:
-  - "04_Research_Plan_FROZEN.md"
-gate_relevance: "Gate 2"
-killer_prior_status: "PASS"
----
-```
-
-**For 04_Execution_Order.md:**
-```yaml
----
-doc_type: "04_Execution_Order"
-version: "1.0"
-status: "frozen"
-created_by: "ChatGPT"
-target_venue: "[Extract from full proposal]"
-topic: "[One-line summary from frozen claims]"
-inputs:
-  - "03_Engineering_Spec.md"
-  - "03_TestPlan.md"
-outputs:
-  - "04_Execution_Order.md"
-gate_relevance: "Gate 2"
----
-```
-
-**For 04_Stop_or_Pivot_Checkpoints.md:**
-```yaml
----
-doc_type: "04_Stop_or_Pivot_Checkpoints"
-version: "1.0"
-status: "frozen"
-created_by: "ChatGPT"
-target_venue: "[Extract from full proposal]"
-topic: "[One-line summary from frozen claims]"
-inputs:
-  - "04_Research_Plan_FROZEN.md"
-  - "01_Pivot_Rules.md"
-outputs:
-  - "04_Stop_or_Pivot_Checkpoints.md"
-gate_relevance: "Gate 2"
----
-```
-
-## IMPORTANT - Output Format:
-
-You MUST output THREE separate markdown documents with clear delimiters:
+## Output Format
+Three files (status: frozen), each with YAML front-matter:
 
 ---DOCUMENT_1: 04_Research_Plan_FROZEN.md---
-[Content for frozen plan containing:
-- Final frozen claims + non-claims
-- Figure/table list
-- Method + evaluation + robustness + subgroup plan
-- Baselines + ablations
-- Killer Prior Check reference (MANDATORY)
-- Versioning rules]
+```yaml
+---
+doc_type: ResearchPlanFrozen
+version: "1.0"
+status: frozen
+created_by: ChatGPT
+gate_relevance: Gate2
+killer_prior_status: PASS
+---
+```
+[Frozen plan with sections 1, 4, 5]
 ---END_DOCUMENT_1---
 
 ---DOCUMENT_2: 04_Execution_Order.md---
-[Content for execution order containing:
-- Ordered list of engineering modules (from Engineering Spec)
-- Dependencies between modules
-- Estimated timeline
-- Critical path
-- Parallel execution opportunities]
+```yaml
+---
+doc_type: ExecutionOrder
+version: "1.0"
+status: frozen
+created_by: ChatGPT
+gate_relevance: Gate2
+---
+```
+[Execution order from section 3]
 ---END_DOCUMENT_2---
 
 ---DOCUMENT_3: 04_Stop_or_Pivot_Checkpoints.md---
-[Content for stop/pivot checkpoints containing:
-- 3-5 checkpoints with:
-  * Checkpoint ID
-  * After which deliverable(s)
-  * Success criteria (GO)
-  * Pivot criteria (PIVOT - what to change)
-  * Stop criteria (STOP - when to abandon)
-  * Decision timeline]
+```yaml
+---
+doc_type: StopOrPivotCheckpoints
+version: "1.0"
+status: frozen
+created_by: ChatGPT
+gate_relevance: Gate2
+---
+```
+[Stop/pivot checkpoints from section 2]
 ---END_DOCUMENT_3---
 
 Each document should be complete and standalone.
+
+THIS REQUIRES HUMAN SIGN-OFF (Gate 2 final confirmation) BEFORE PROCEEDING TO STEP 3.
 """
 
     return prompt
 
 
+# ============================================================
+# LEGACY: Step 2.5 Prompt (SOP v4.0) — 保留用于对比
+# ============================================================
+# def render_step_2_5_prompt_v4_legacy(full_proposal_content, engineering_spec_content,
+#                            redteam_content, frozen_claims_content):
+#     prompt = f"""Create the Plan Freeze package.
+#     ## Frozen Claims: {frozen_claims_content}
+#     ## Full Proposal: {full_proposal_content}
+#     ## Engineering Spec: {engineering_spec_content}
+#     ## Red Team Review: {redteam_content}
+#     ## Tasks: 1) Compile frozen plan 2) Stop/Pivot checkpoints 3) Versioning rules
+#     4) Reference Killer Prior Check
+#     ## Output: THREE documents with YAML front-matter and delimiters
+#     """
+#     return prompt
+
+
+# Step 2.0: Figure/Table List — ChatGPT (v4.0 addition, retained in v7)
 def render_step_2_0_prompt(frozen_claims_content: str, target_venue: str) -> str:
     """
-    渲染 Step 2.0 Prompt: Figure/Table List (ChatGPT) - v4.0 NEW
+    渲染 Step 2.0 Prompt: Figure/Table List (ChatGPT)
+    Not a separate v7 SOP step, but useful pre-proposal planning.
 
     Args:
         frozen_claims_content: Frozen Claims 内容
@@ -536,80 +553,68 @@ def render_step_2_0_prompt(frozen_claims_content: str, target_venue: str) -> str
     Returns:
         str: 渲染后的 prompt
     """
-    prompt = f"""You are the PI. Before writing the full proposal, create a comprehensive Figure/Table List.
+    prompt = f"""You are the PI.
 
-Target venue: {target_venue}
+## Task
+Before writing the full proposal, create a comprehensive Figure/Table List.
+
+## Input
+- `01_Claims_and_NonClaims.md` (frozen) — attached below.
+- Target Venue: {target_venue}
 
 ## Frozen Claims and NonClaims:
 {frozen_claims_content}
 
-## Tasks:
+## Actions (complete all four)
 
-1) **List all planned figures and tables (<=8 total)**
-   For each figure/table:
-   - ID (e.g., Fig1, Table1)
-   - Title/Caption (draft)
-   - Purpose: Which claim(s) does it support?
-   - Content: What will be shown? (axes, metrics, comparisons)
-   - Acceptance criteria: What pattern/result would make this figure "successful"?
+### 1. Figure/Table List (<=8 total)
+For each figure/table:
+- ID (e.g., Fig1, Table1)
+- Title/Caption (draft)
+- Purpose: Which claim(s) does it support?
+- Content: What will be shown? (axes, metrics, comparisons)
+- Acceptance criteria: What pattern/result would make this figure "successful"?
 
-2) **Map Claims to Figures/Tables**
-   - For each claim, list which figure(s)/table(s) provide evidence
-   - Ensure every claim has at least one figure/table
+### 2. Claim-to-Evidence Map
+For each claim, list which figure(s)/table(s) provide evidence.
+Ensure every claim has at least one figure/table.
 
-3) **Prioritize by Importance**
-   - Mark which figures are CRITICAL (must-have for main claims)
-   - Mark which are SUPPORTING (nice-to-have for robustness)
+### 3. Priority
+- CRITICAL (must-have for main claims)
+- SUPPORTING (nice-to-have for robustness)
 
-4) **Venue-Specific Guidance**
-   - What figure style does {target_venue} prefer?
-   - What level of detail in captions?
-   - Any specific requirements (e.g., error bars, statistical tests)?
+### 4. Venue-Specific Guidance
+- Figure style {target_venue} prefers
+- Caption detail level
+- Specific requirements (error bars, statistical tests, etc.)
 
-## YAML Front-Matter Requirements
+## Output Format
+File: `02_Figure_Table_List.md`
 
-Your output MUST begin with the following YAML front-matter (fill in the bracketed values):
-
+Begin with YAML front-matter:
 ```yaml
 ---
-doc_type: "02_Figure_Table_List"
+doc_type: FigureTableList
 version: "0.1"
-status: "draft"
-created_by: "ChatGPT"
+status: draft
+created_by: ChatGPT
 target_venue: "{target_venue}"
-topic: "[One-line summary from frozen claims]"
-inputs:
-  - "01_Claims_and_NonClaims.md"
-  - "01_Figure_First_Story.md"
-outputs:
-  - "02_Figure_Table_List.md"
-gate_relevance: "Gate 2"
+gate_relevance: Gate2
 ---
 ```
 
-After the YAML front-matter, provide the complete document content including:
-
-## Output Format:
-
-### A) Figure/Table List
-[Table with columns: ID | Title | Purpose (Claims) | Content | Acceptance Criteria | Priority]
-
-### B) Claim-to-Evidence Map
-[For each claim, list supporting figures/tables]
-
-### C) Venue-Specific Notes
-[Style guidance for {target_venue}]
-
-Return as 02_Figure_Table_List.md.
+Then provide sections A) Figure/Table List, B) Claim-to-Evidence Map, C) Venue-Specific Notes.
 """
 
     return prompt
 
 
+# v7 SOP 6.13 [S6b] Patch Review — ChatGPT
 def render_step_2_4b_prompt(redteam_content: str, full_proposal_content: str,
                             engineering_spec_content: str) -> str:
     """
-    渲染 Step 2.4b Prompt: Patch Propagation (ChatGPT) - v4.0 NEW
+    渲染 Step 2.4b Prompt: Patch Review (ChatGPT)
+    v7 SOP 6.13 — Architect / Planner role
 
     Args:
         redteam_content: Red Team Review 内容
@@ -619,7 +624,13 @@ def render_step_2_4b_prompt(redteam_content: str, full_proposal_content: str,
     Returns:
         str: 渲染后的 prompt
     """
-    prompt = f"""You are the PI. Apply the Red Team patches to the proposal and engineering spec.
+    prompt = f"""You are the Architect / Planner.
+
+## Task
+Review Red Team patches. Accept or reject each one.
+
+## Input
+- `03_RedTeam_Reviewer2.md` — attached below.
 
 ## Red Team Review (with minimal patch set):
 {redteam_content}
@@ -630,73 +641,60 @@ def render_step_2_4b_prompt(redteam_content: str, full_proposal_content: str,
 ## Current Engineering Spec:
 {engineering_spec_content}
 
-## Tasks:
+## Actions
 
-1) **Extract Patch Items**
-   - List all patches from the Red Team review (<=5 items)
-   - For each patch:
-     * Issue ID
-     * Issue description
-     * Proposed fix
-     * Impact (which sections need updating)
+### For Each Fatal Issue + Patch:
+- Verdict: ACCEPT / REJECT
+- Reason (1-2 sentences)
+- If ACCEPT: what evidence is needed to verify the patch was applied correctly
 
-2) **Apply Patches**
-   - For each patch, describe:
-     * What changes in the Full Proposal
-     * What changes in the Engineering Spec
-     * What new figures/tables/tests are needed
-   - Generate a diff-style summary
+### For Each Accepted Patch:
+- Write the specific change to be made to the target artifact
+- Note if the change introduces new assumptions or new baselines (triggers Gate 2 re-run)
 
-3) **Verify Coverage**
-   - Check that all critical issues are addressed
-   - Identify any remaining risks
+## Output Format
+Two files:
 
-4) **Update Checklist**
-   - List all sections that need manual review/update
-   - Prioritize by urgency
-
-## YAML Front-Matter Requirements
-
-Your output MUST begin with the following YAML front-matter (fill in the bracketed values):
-
+---DOCUMENT_1: 03_Patch_Review.md---
 ```yaml
 ---
-doc_type: "03_Patch_Diff"
+doc_type: PatchReview
 version: "0.1"
-status: "draft"
-created_by: "ChatGPT"
-target_venue: "[Extract from full proposal]"
-topic: "[One-line summary from full proposal]"
-inputs:
-  - "03_RedTeam_Reviewer2.md"
-  - "02_Full_Proposal.md"
-  - "03_Engineering_Spec.md"
-outputs:
-  - "03_Patch_Diff.md"
-gate_relevance: "Gate 2"
+status: draft
+created_by: ChatGPT
+gate_relevance: Gate2
 ---
 ```
+[Accept/Reject verdicts for each patch with reasons]
+---END_DOCUMENT_1---
 
-After the YAML front-matter, provide the complete document content including:
-
-## Output Format:
-
-### A) Patch Summary
-[Table: Patch ID | Issue | Fix | Impact | Status]
-
-### B) Proposal Changes
-[Diff-style summary of changes to Full Proposal]
-
-### C) Engineering Spec Changes
-[Diff-style summary of changes to Engineering Spec]
-
-### D) New Requirements
-[List of new figures/tables/tests needed]
-
-### E) Manual Review Checklist
-[Prioritized list of sections needing manual update]
-
-Return as 03_Patch_Diff.md.
+---DOCUMENT_2: 03_Patch_Diff.md---
+```yaml
+---
+doc_type: PatchDiff
+version: "0.1"
+status: draft
+created_by: ChatGPT
+gate_relevance: Gate2
+---
+```
+[Only accepted patches, in diff format — specific changes to proposal and engineering spec]
+---END_DOCUMENT_2---
 """
 
     return prompt
+
+
+# ============================================================
+# LEGACY: Step 2.4b Prompt (SOP v4.0) — 保留用于对比
+# ============================================================
+# def render_step_2_4b_prompt_v4_legacy(redteam_content, full_proposal_content,
+#                             engineering_spec_content):
+#     prompt = f"""You are the PI. Apply the Red Team patches to the proposal and engineering spec.
+#     ## Red Team Review: {redteam_content}
+#     ## Current Full Proposal: {full_proposal_content}
+#     ## Current Engineering Spec: {engineering_spec_content}
+#     ## Tasks: 1) Extract Patch Items 2) Apply Patches 3) Verify Coverage 4) Update Checklist
+#     ## Output: 03_Patch_Diff.md with YAML front-matter
+#     """
+#     return prompt

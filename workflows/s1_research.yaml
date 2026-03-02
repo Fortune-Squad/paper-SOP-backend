@@ -1,9 +1,9 @@
-# Step 1: Deep Research & Topic Freeze Workflow
+# Step 1: Deep Research & Topic Freeze Workflow (v2.0 - SOP v7)
 # 深度研究与主题冻结工作流
 
 workflow_id: s1_research
 workflow_name: Deep Research & Topic Freeze Workflow
-version: "1.0"
+version: "2.0"
 initial_state: start
 
 states:
@@ -47,33 +47,25 @@ states:
 
   step_1_2:
     type: task
-    description: Topic Selection
+    description: Topic Selection & Draft Claims
     actions:
       - execute_step_1_2
       - validate_topic_selection
     transitions:
-      - to: step_1_2b
+      - to: gate_1_check
         condition: topic_selected
 
-  step_1_2b:
-    type: task
-    description: Topic Alignment Check
-    actions:
-      - execute_step_1_2b
-      - validate_topic_alignment
-    transitions:
-      - to: gate_1_25_check
-
-  gate_1_25_check:
+  # v7: Gate 1 now includes Topic Alignment (merged from Gate 1.25)
+  gate_1_check:
     type: decision
-    description: Gate 1.25 - Topic Alignment Check
+    description: Gate 1 - Topic Candidate Selected + Alignment
     actions:
-      - check_gate_1_25
+      - check_gate_1
     transitions:
       - to: step_1_3
-        condition: gate_1_25_pass
+        condition: gate_1_pass
       - to: step_1_2
-        condition: gate_1_25_fail
+        condition: gate_1_fail
 
   step_1_3:
     type: task
@@ -122,18 +114,7 @@ states:
       - execute_step_1_5
       - validate_story
     transitions:
-      - to: gate_1_check
-
-  gate_1_check:
-    type: decision
-    description: Gate 1 - Topic Freeze
-    actions:
-      - check_gate_1
-    transitions:
       - to: completed
-        condition: gate_1_pass
-      - to: step_1_4
-        condition: gate_1_fail
 
   completed:
     type: end
@@ -150,10 +131,11 @@ states:
     transitions: []
 
 metadata:
-  author: v6.0 Upgrade Team
-  created_at: "2026-02-04"
+  author: v7.0 Upgrade Team
+  created_at: "2026-02-25"
   description: |
     Step 1 workflow handles deep research, topic selection, and topic freeze.
+    v7: Gate 1 now includes Topic Alignment (merged from old Gate 1.25).
     Includes mandatory Gate 1.5 (Killer Prior Check) that must PASS to proceed.
 
   gate_requirements:
@@ -161,24 +143,21 @@ metadata:
       - Reference quality validated
       - DOI accessibility checked
       - Literature completeness verified
-    gate_1_25:
-      - Topic aligns with venue taste
-      - Topic satisfies constraints
-      - Topic has clear novelty
+    gate_1:
+      - Topic selected with alignment check (v7: includes old Gate 1.25)
+      - North-Star Question coverage
+      - Core keyword coverage
+      - Scope boundaries clear
+      - Claims defined
     gate_1_5:
       - No killer prior exists (MANDATORY)
       - Topic is sufficiently novel
       - Differentiation is clear
-    gate_1:
-      - Topic selected and frozen
-      - Claims defined
-      - Story structure complete
 
   artifacts_produced:
     - DEEP_RESEARCH_SUMMARY
     - REFERENCE_QA_REPORT
     - SELECTED_TOPIC
-    - TOPIC_ALIGNMENT_CHECK
     - KILLER_PRIOR_CHECK
     - CLAIMS_AND_NONCLAIMS
     - FIGURE_FIRST_STORY

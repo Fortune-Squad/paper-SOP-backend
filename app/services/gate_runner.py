@@ -71,7 +71,8 @@ class GateRunner:
             elif gate_type == GateType.GATE_1:
                 raw_result = await self.gate_checker.check_gate_1(project)
             elif gate_type == GateType.GATE_1_25:
-                raw_result = await self.gate_checker.check_gate_1_25(project)
+                # DEPRECATED v7.0: redirects to check_gate_1
+                raw_result = await self.gate_checker.check_gate_1(project)
             elif gate_type == GateType.GATE_1_5:
                 raw_result = await self.gate_checker.check_gate_1_5(project)
             elif gate_type == GateType.GATE_1_6:
@@ -171,11 +172,10 @@ class GateRunner:
         """
         results = {}
 
-        # Gate 检查顺序
+        # Gate 检查顺序 (v7.0: GATE_1_25 removed, merged into GATE_1)
         gate_sequence = [
             GateType.GATE_0,
             GateType.GATE_1,
-            GateType.GATE_1_25,
             GateType.GATE_1_5,
             GateType.GATE_1_6,
             GateType.GATE_2,

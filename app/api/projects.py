@@ -2,13 +2,14 @@
 项目管理 API 路由
 v6.1: 添加用户认证和权限控制
 """
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Body
 from typing import List, Dict, Any, Optional
 import logging
 import re
 
 from app.models.project import ProjectConfig, StepStatus
 from app.models.document import DocumentType
+from app.models.bootloader import ResourceCardInput
 from app.services.project_manager import ProjectManager
 from app.utils.file_manager import FileManager
 from app.services.clarity_analyzer import get_clarity_analyzer
@@ -24,17 +25,20 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 project_manager = ProjectManager()
 file_manager = FileManager()
 
-# 有效的步骤 ID 列表 (v6.0 - 包含 Bootloader)
+# 有效的步骤 ID 列表 (v6.0 - 包含 Bootloader + Step 3-4)
 VALID_STEP_IDS = {
     "step_s_1",  # v6.0 NEW: Fuzzy Bootloader
     "step_0_1", "step_0_2",
-    "step_1_1", "step_1_1b", "step_1_2", "step_1_2b", "step_1_3", "step_1_4", "step_1_5",
+    "step_1_1a", "step_1_1b", "step_1_1c", "step_1_2", "step_1_3", "step_1_3b", "step_1_4", "step_1_5",
     "step_2_0", "step_2_1", "step_2_2", "step_2_3", "step_2_4", "step_2_4b", "step_2_5",
+    "step_3_init", "step_3_exec",
+    "step_4_collect", "step_4_figure_polish", "step_4_assembly", "step_4_citation_qa", "step_4_repro", "step_4_package",
 }
 
 # 有效的 gate 名称列表
 VALID_GATE_NAMES = {
-    "gate_0", "gate_1", "gate_1_25", "gate_1_5", "gate_1_6", "gate_2"
+    "gate_0", "gate_1", "gate_1_5", "gate_1_6", "gate_2",
+    "gate_wp", "gate_freeze", "gate_delivery",
 }
 
 
@@ -144,8 +148,8 @@ async def analyze_input_clarity(config: ProjectConfig) -> Dict[str, Any]:
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_project(
     config: ProjectConfig,
-    skip_bootloader: bool = False,
-    skip_reason: Optional[str] = None,
+    skip_bootloader: bool = Body(False),
+    skip_reason: Optional[str] = Body(None),
     current_user: DBUser = Depends(get_current_active_user)  # v6.1: 需要认证
 ) -> Dict[str, Any]:
     """
@@ -219,7 +223,8 @@ async def create_project(
 @router.post("/{project_id}/bootloader/skip")
 async def skip_bootloader(
     project_id: str,
-    reason: str
+    reason: str = Body(..., embed=True),
+    current_user: DBUser = Depends(get_current_active_user)
 ) -> Dict[str, Any]:
     """
     跳过 Bootloader 并直接进入 Step 0（Phase 3: Smart Trigger）
@@ -229,6 +234,7 @@ async def skip_bootloader(
     Args:
         project_id: 项目 ID
         reason: 跳过原因
+        current_user: 当前认证用户
 
     Returns:
         Dict: 操作结果
@@ -237,12 +243,20 @@ async def skip_bootloader(
         validate_project_id(project_id)
 
         # 加载项目
-        project = await project_manager.load_project(project_id)
+        project = await project_manager._load_project(project_id)
 
         if not project:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Project not found: {project_id}"
+            )
+
+        # 检查访问权限
+        is_admin = current_user.role == "admin"
+        if not project_manager.check_project_access(project, str(current_user.id), is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this project"
             )
 
         # 验证当前步骤是 step_s_1
@@ -298,7 +312,8 @@ async def skip_bootloader(
 @router.post("/{project_id}/bootloader/regenerate")
 async def regenerate_bootloader(
     project_id: str,
-    focus_areas: Optional[List[str]] = None
+    focus_areas: Optional[List[str]] = Body(None, embed=True),
+    current_user: DBUser = Depends(get_current_active_user)
 ) -> Dict[str, Any]:
     """
     重新生成 Bootloader 输出（Phase 3: Confirmation Workflow）
@@ -308,12 +323,27 @@ async def regenerate_bootloader(
     Args:
         project_id: 项目 ID
         focus_areas: 可选的关注领域列表（如 ["datasets", "tools"]）
+        current_user: 当前认证用户
 
     Returns:
         Dict: 新的 Bootloader 输出
     """
     try:
         validate_project_id(project_id)
+
+        # 检查访问权限
+        project = await project_manager._load_project(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project not found: {project_id}"
+            )
+        is_admin = current_user.role == "admin"
+        if not project_manager.check_project_access(project, str(current_user.id), is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this project"
+            )
 
         from app.services.bootloader_confirmation import get_bootloader_confirmation_service
 
@@ -348,7 +378,8 @@ async def regenerate_bootloader(
 @router.put("/{project_id}/bootloader/outputs")
 async def update_bootloader_outputs(
     project_id: str,
-    outputs: Dict[str, Any]
+    outputs: Dict[str, Any],
+    current_user: DBUser = Depends(get_current_active_user)
 ) -> Dict[str, Any]:
     """
     更新用户编辑的 Bootloader 输出（Phase 3: Confirmation Workflow）
@@ -358,12 +389,27 @@ async def update_bootloader_outputs(
     Args:
         project_id: 项目 ID
         outputs: 包含编辑后输出的字典
+        current_user: 当前认证用户
 
     Returns:
         Dict: 操作结果
     """
     try:
         validate_project_id(project_id)
+
+        # 检查访问权限
+        project = await project_manager._load_project(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project not found: {project_id}"
+            )
+        is_admin = current_user.role == "admin"
+        if not project_manager.check_project_access(project, str(current_user.id), is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this project"
+            )
 
         from app.services.bootloader_confirmation import get_bootloader_confirmation_service
         from app.models.bootloader import DomainDictionary, OOTCandidates, ResourceCard
@@ -417,7 +463,10 @@ async def update_bootloader_outputs(
 
 
 @router.post("/{project_id}/bootloader/confirm")
-async def confirm_bootloader(project_id: str) -> Dict[str, Any]:
+async def confirm_bootloader(
+    project_id: str,
+    current_user: DBUser = Depends(get_current_active_user)
+) -> Dict[str, Any]:
     """
     确认 Bootloader 输出并进入 Step 0（Phase 3: Confirmation Workflow）
 
@@ -426,12 +475,27 @@ async def confirm_bootloader(project_id: str) -> Dict[str, Any]:
 
     Args:
         project_id: 项目 ID
+        current_user: 当前认证用户
 
     Returns:
         Dict: 操作结果和更新后的项目信息
     """
     try:
         validate_project_id(project_id)
+
+        # 检查访问权限
+        project = await project_manager._load_project(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project not found: {project_id}"
+            )
+        is_admin = current_user.role == "admin"
+        if not project_manager.check_project_access(project, str(current_user.id), is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this project"
+            )
 
         from app.services.bootloader_confirmation import get_bootloader_confirmation_service
 
@@ -461,6 +525,34 @@ async def confirm_bootloader(project_id: str) -> Dict[str, Any]:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to confirm bootloader: {str(e)}"
+        )
+
+
+@router.get("/")
+async def list_projects(
+    current_user: DBUser = Depends(get_current_active_user)  # v6.1: 需要认证
+) -> List[Dict[str, Any]]:
+    """
+    列出用户可访问的项目
+    v6.1: 管理员可以看到所有项目，普通用户只能看到自己的项目
+
+    Args:
+        current_user: 当前认证用户
+
+    Returns:
+        List[Dict]: 项目列表
+    """
+    try:
+        is_admin = current_user.role == "admin"
+        return await project_manager.list_projects_for_user(
+            user_id=str(current_user.id),
+            is_admin=is_admin
+        )
+    except Exception as e:
+        logger.error(f"Failed to list projects: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
         )
 
 
@@ -513,32 +605,6 @@ async def get_project_status(
         )
 
 
-@router.get("/")
-async def list_projects(
-    current_user: DBUser = Depends(get_current_active_user)  # v6.1: 需要认证
-) -> List[Dict[str, Any]]:
-    """
-    列出用户可访问的项目
-    v6.1: 管理员可以看到所有项目，普通用户只能看到自己的项目
-
-    Args:
-        current_user: 当前认证用户
-
-    Returns:
-        List[Dict]: 项目列表
-    """
-    try:
-        is_admin = current_user.role == "admin"
-        return await project_manager.list_projects_for_user(
-            user_id=str(current_user.id),
-            is_admin=is_admin
-        )
-    except Exception as e:
-        logger.error(f"Failed to list projects: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
 
 
 @router.post("/{project_id}/steps/{step_id}/execute")
@@ -609,13 +675,18 @@ async def execute_step(
 
 
 @router.post("/{project_id}/gates/{gate_name}/check")
-async def check_gate(project_id: str, gate_name: str) -> Dict[str, Any]:
+async def check_gate(
+    project_id: str,
+    gate_name: str,
+    current_user: DBUser = Depends(get_current_active_user)
+) -> Dict[str, Any]:
     """
     检查 Gate
 
     Args:
         project_id: 项目 ID
         gate_name: Gate 名称 (gate_0, gate_1, gate_1_25, gate_1_5, gate_1_6, gate_2)
+        current_user: 当前认证用户
 
     Returns:
         Dict: Gate 检查结果
@@ -631,6 +702,14 @@ async def check_gate(project_id: str, gate_name: str) -> Dict[str, Any]:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Project not found: {project_id}"
+            )
+
+        # 检查访问权限
+        is_admin = current_user.role == "admin"
+        if not project_manager.check_project_access(project, str(current_user.id), is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this project"
             )
 
         # 检查 Gate
@@ -650,19 +729,176 @@ async def check_gate(project_id: str, gate_name: str) -> Dict[str, Any]:
         )
 
 
-
-@router.get("/{project_id}/status")
-async def get_project_detailed_status(project_id: str) -> Dict[str, Any]:
+@router.post("/{project_id}/gates/{gate_name}/approve")
+async def approve_gate(
+    project_id: str,
+    gate_name: str,
+    current_user: DBUser = Depends(get_current_active_user)
+) -> Dict[str, Any]:
     """
-    获取项目详细状态（包含步骤信息）
-    
+    人工确认通过 Gate（跳过自动检查）
+
     Args:
         project_id: 项目 ID
-        
+        gate_name: Gate 名称
+
+    Returns:
+        Dict: 操作结果
+    """
+    validate_project_id(project_id)
+    validate_gate_name(gate_name)
+
+    try:
+        project = await project_manager._load_project(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project not found: {project_id}"
+            )
+
+        # 检查访问权限
+        is_admin = current_user.role == "admin"
+        if not project_manager.check_project_access(project, str(current_user.id), is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this project"
+            )
+
+        # 设置 gate 为通过
+        from datetime import datetime
+        gate_flag_map = {
+            "gate_0": "gate_0_passed",
+            "gate_1": "gate_1_passed",
+            "gate_1_5": "gate_1_5_passed",
+            "gate_1_6": "gate_1_6_passed",
+            "gate_2": "gate_2_passed",
+            "gate_delivery": "gate_delivery_passed",
+        }
+
+        flag = gate_flag_map.get(gate_name)
+        if not flag:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Gate {gate_name} does not support manual approval"
+            )
+
+        setattr(project, flag, True)
+        project.gate_results[gate_name] = {
+            "verdict": "PASS",
+            "manual_approval": True,
+            "approved_by": current_user.username,
+            "checked_at": datetime.now().isoformat(),
+            "note": f"Manually approved by {current_user.username}"
+        }
+
+        await project_manager._save_project(project)
+        logger.info(f"Gate {gate_name} manually approved by {current_user.username} for project {project_id}")
+
+        return {
+            "gate_name": gate_name,
+            "verdict": "PASS",
+            "manual_approval": True,
+            "approved_by": current_user.username,
+            "message": f"Gate {gate_name} 已人工确认通过"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to approve gate: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@router.post("/{project_id}/loops/{gate_name}/rollback")
+async def trigger_loop_rollback(
+    project_id: str,
+    gate_name: str,
+    current_user: DBUser = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    """
+    手动触发 Loop 回退 (v7 SOP Section 3.3)
+
+    当 Gate 失败时，手动触发回退到指定步骤重新执行。
+
+    Args:
+        project_id: 项目 ID
+        gate_name: Gate 名称 (gate_1, gate_1_5, gate_1_6, gate_2, red_team)
+
+    Returns:
+        Dict: 回退结果
+    """
+    validate_project_id(project_id)
+
+    from app.services.project_manager import LOOP_DEFINITIONS
+
+    if gate_name not in LOOP_DEFINITIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No loop defined for gate: {gate_name}. Valid gates: {sorted(LOOP_DEFINITIONS.keys())}"
+        )
+
+    try:
+        project = await project_manager._load_project(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project not found: {project_id}"
+            )
+
+        # 检查访问权限
+        is_admin = current_user.role == "admin"
+        if not project_manager.check_project_access(project, str(current_user.id), is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this project"
+            )
+
+        result = await project_manager.handle_gate_failure(project, gate_name)
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to trigger loop rollback: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@router.get("/{project_id}/status")
+async def get_project_detailed_status(
+    project_id: str,
+    current_user: DBUser = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    """
+    获取项目详细状态（包含步骤信息）
+
+    Args:
+        project_id: 项目 ID
+        current_user: 当前认证用户
+
     Returns:
         Dict: 项目详细状态信息
     """
     try:
+        # 检查访问权限
+        project = await project_manager._load_project(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project not found: {project_id}"
+            )
+        is_admin = current_user.role == "admin"
+        if not project_manager.check_project_access(project, str(current_user.id), is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this project"
+            )
+
         return await project_manager.get_project_status(project_id)
     except ValueError as e:
         raise HTTPException(
@@ -709,12 +945,13 @@ async def get_project_documents(
                 detail="You don't have permission to access this project"
             )
 
-        # 定义普通用户可见的文档类型（最终文档 + Bootloader 输出）
+        # TODO: 讨论确定 non-admin 用户应该看到哪些文档，当前仅限最终文档 + Bootloader 输出
+        # 定义普通用户可见的文档类型
         user_visible_docs = {
             DocumentType.RESEARCH_PLAN_FROZEN,  # 最终文档
-            DocumentType.BOOTLOADER_DOMAIN_DICT,  # Bootloader 输出
-            DocumentType.BOOTLOADER_OOT_CANDIDATES,
-            DocumentType.BOOTLOADER_RESOURCE_CARD,
+            DocumentType.DOMAIN_DICTIONARY,  # Bootloader 输出
+            DocumentType.OOT_CANDIDATES,
+            DocumentType.RESOURCE_CARD,
         }
 
         documents = []
@@ -793,12 +1030,12 @@ async def get_document(
         # 转换文档类型
         doc_type_enum = DocumentType(doc_type)
 
-        # 检查普通用户是否有权限访问该文档
+        # TODO: 讨论确定 non-admin 用户应该看到哪些文档，当前仅限最终文档 + Bootloader 输出
         user_visible_docs = {
             DocumentType.RESEARCH_PLAN_FROZEN,
-            DocumentType.BOOTLOADER_DOMAIN_DICT,
-            DocumentType.BOOTLOADER_OOT_CANDIDATES,
-            DocumentType.BOOTLOADER_RESOURCE_CARD,
+            DocumentType.DOMAIN_DICTIONARY,
+            DocumentType.OOT_CANDIDATES,
+            DocumentType.RESOURCE_CARD,
         }
 
         if not is_admin and doc_type_enum not in user_visible_docs:
@@ -840,13 +1077,18 @@ async def get_document(
 
 
 @router.post("/{project_id}/steps/{step_id}/reset")
-async def reset_step(project_id: str, step_id: str) -> Dict[str, Any]:
+async def reset_step(
+    project_id: str,
+    step_id: str,
+    current_user: DBUser = Depends(get_current_active_user)
+) -> Dict[str, Any]:
     """
     重置步骤状态（用于重试失败的步骤）
 
     Args:
         project_id: 项目 ID
         step_id: 步骤 ID
+        current_user: 当前认证用户
 
     Returns:
         Dict: 重置结果
@@ -858,6 +1100,14 @@ async def reset_step(project_id: str, step_id: str) -> Dict[str, Any]:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Project not found: {project_id}"
+            )
+
+        # 检查访问权限
+        is_admin = current_user.role == "admin"
+        if not project_manager.check_project_access(project, str(current_user.id), is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this project"
             )
 
         # 检查步骤是否存在
@@ -894,18 +1144,37 @@ async def reset_step(project_id: str, step_id: str) -> Dict[str, Any]:
 
 
 @router.put("/{project_id}/config")
-async def update_project_config(project_id: str, config: ProjectConfig) -> Dict[str, Any]:
+async def update_project_config(
+    project_id: str,
+    config: ProjectConfig,
+    current_user: DBUser = Depends(get_current_active_user)
+) -> Dict[str, Any]:
     """
     更新项目配置（仅在未开始执行时允许）
 
     Args:
         project_id: 项目 ID
         config: 新的项目配置
+        current_user: 当前认证用户
 
     Returns:
         Dict: 更新后的项目信息
     """
     try:
+        # 检查访问权限
+        project = await project_manager._load_project(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project not found: {project_id}"
+            )
+        is_admin = current_user.role == "admin"
+        if not project_manager.check_project_access(project, str(current_user.id), is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this project"
+            )
+
         updated_project = await project_manager.update_project_config(project_id, config)
 
         # 返回完整的项目信息
@@ -951,6 +1220,62 @@ async def update_project_config(project_id: str, config: ProjectConfig) -> Dict[
         )
     except Exception as e:
         logger.error(f"Failed to update project config: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@router.put("/{project_id}/resource-card-input")
+async def save_resource_card_input(
+    project_id: str,
+    resource_input: ResourceCardInput,
+    current_user: DBUser = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    """
+    保存用户填写的 Resource Card 表单数据
+
+    Args:
+        project_id: 项目 ID
+        resource_input: Resource Card 表单数据
+        current_user: 当前认证用户
+
+    Returns:
+        Dict: 保存结果
+    """
+    validate_project_id(project_id)
+    try:
+        project = await project_manager._load_project(project_id)
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project {project_id} not found"
+            )
+
+        # 检查访问权限
+        is_admin = current_user.role == "admin"
+        if not project_manager.check_project_access(project, str(current_user.id), is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this project"
+            )
+
+        # 保存到 project.config.resource_card_input
+        project.config.resource_card_input = resource_input.model_dump()
+        project.updated_at = datetime.now()
+        await project_manager._save_project(project)
+
+        logger.info(f"Saved resource card input for project {project_id}, is_skipped={resource_input.is_skipped}")
+        return {
+            "success": True,
+            "project_id": project_id,
+            "is_skipped": resource_input.is_skipped,
+            "message": "Resource card input saved successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to save resource card input: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
