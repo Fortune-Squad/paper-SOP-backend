@@ -20,6 +20,7 @@ python-Levenshtein==0.23.0
 tiktoken==0.5.2
 portalocker==2.8.2
 numpy<2.0
+psycopg2-binary
 
 # Authentication dependencies
 sqlalchemy==2.0.25
