@@ -4,7 +4,8 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # 系统依赖（如 git 用于 GitManager）
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
