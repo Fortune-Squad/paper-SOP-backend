@@ -21,7 +21,6 @@ pip install -r requirements.txt
 ```bash
 python scripts/init_db.py
 python scripts/create_admin.py
-# default user: admin, pwd: 123456
 ```
 
 启动：
