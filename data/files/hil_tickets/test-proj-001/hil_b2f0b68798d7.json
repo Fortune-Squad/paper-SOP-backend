@@ -1,0 +1,30 @@
+{
+  "ticket_id": "hil_b2f0b68798d7",
+  "project_id": "test-proj-001",
+  "step_id": "step_1_1a",
+  "question_type": "decision",
+  "question": "Gate 1 (Topic Candidate) 已连续 2 次 FAIL，Loop loop_a 重试次数已耗尽。请决定下一步操作。",
+  "context": {
+    "loop_id": "loop_a",
+    "gate_name": "gate_1",
+    "retry_count": 2,
+    "max_retries": 2,
+    "target_step": "step_1_1a"
+  },
+  "options": [
+    "Kill（终止项目）",
+    "Pivot（更换方向）",
+    "Downgrade（降级 Rigor Profile）"
+  ],
+  "default_answer": "Kill（终止项目）",
+  "priority": "critical",
+  "blocking": true,
+  "status": "pending",
+  "answer": null,
+  "explanation": null,
+  "confidence": null,
+  "created_at": "2026-03-05T16:34:21.586911",
+  "expires_at": "2026-03-08T16:34:21.586904",
+  "answered_at": null,
+  "metadata": null
+}

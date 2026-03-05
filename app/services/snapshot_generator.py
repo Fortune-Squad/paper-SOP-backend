@@ -115,9 +115,11 @@ class SnapshotGenerator:
     - 替换 AGENTS.md 中 AUTO-GENERATED 区间
     - 控制动态 section < 2000 tokens
     """
-    def __init__(self, project_path: str):
+    def __init__(self, project_path: str, *, slots: list = None, trajectory_store=None):
         self.project_path = Path(project_path)
         self.agents_md_path = self.project_path / "AGENTS.md"
+        self.slots = slots or []
+        self.trajectory_store = trajectory_store
     def initialize_agents_md(self, project_overview: str = "SignalPass 多模型科研 SOP 项目") -> None:
         """
         首次创建 AGENTS.md
@@ -280,6 +282,43 @@ class SnapshotGenerator:
             missing = delivery.get("missing_deliverables", [])
             if missing:
                 lines.append(f"- Missing: {', '.join(missing[:5])}")
+        # ── Slot status (Phase 3) ──
+        if self.slots:
+            lines.append("")
+            lines.append("### Slot Status")
+            for slot_obj in self.slots:
+                try:
+                    st = slot_obj.get_status()
+                    slot_name = st.get("slot", "unknown")
+                    slot_status = st.get("status", "unknown")
+                    detail_parts = [
+                        f"{k}={v}" for k, v in st.items()
+                        if k not in ("slot", "status") and v is not None
+                    ]
+                    detail = ", ".join(detail_parts[:4]) if detail_parts else ""
+                    lines.append(f"- **{slot_name}** [{slot_status}]: {detail}")
+                except Exception:
+                    logger.debug("Slot get_status() failed (non-blocking)")
+        # ── Trajectory summary (Phase 3) ──
+        if self.trajectory_store:
+            try:
+                stats = self.trajectory_store.get_stats()
+                total = stats.get("total_records", 0)
+                if total > 0:
+                    lines.append("")
+                    lines.append("### Trajectory Summary")
+                    lines.append(f"- Total records: {total}")
+                    by_outcome = stats.get("by_outcome", {})
+                    resolved = by_outcome.get("resolved", 0) + by_outcome.get("workaround", 0)
+                    rate = f"{resolved/total*100:.0f}%" if total else "N/A"
+                    lines.append(f"- Resolution rate: {rate}")
+                    by_cat = stats.get("by_category", {})
+                    if by_cat:
+                        top = sorted(by_cat.items(), key=lambda x: x[1], reverse=True)[:3]
+                        top_str = ", ".join(f"{k}({v})" for k, v in top)
+                        lines.append(f"- Top issues: {top_str}")
+            except Exception:
+                logger.debug("Trajectory get_stats() failed (non-blocking)")
         section = "\n".join(lines)
         # Token budget check (< 2000 tokens ≈ 6000 chars)
         if len(section) > 6000:

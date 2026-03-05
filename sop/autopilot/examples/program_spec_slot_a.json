@@ -1,0 +1,18 @@
+{
+  "program_id": "slot-a-submit-example",
+  "goal": "Generate Slot-A submit-only artifacts from candidate context.",
+  "constraints": [
+    "slot_a",
+    "submit_only"
+  ],
+  "max_candidates": 1,
+  "execution_types": [
+    "slot_a"
+  ],
+  "executor_map": {
+    "slot_a": {
+      "kernel": "subprocess",
+      "cmd_file": "sop/autopilot/examples/cmd_slot_a_submit.json"
+    }
+  }
+}

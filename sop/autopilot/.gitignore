@@ -1,0 +1,11 @@
+﻿.smoke_tmp/
+autopilot_smoke_*/
+__pycache__/
+*.pyc
+*.pyo
+
+.smoke_tmp_test/
+.p3_tmp/
+.p5_tmp/
+.p6_tmp/
+.p*_tmp/

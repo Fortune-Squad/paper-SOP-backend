@@ -1,0 +1,5 @@
+[
+  "@PYTHON@",
+  "-m",
+  "sop.autopilot.bridges.slot_b_manual_bundle"
+]

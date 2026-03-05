@@ -3,6 +3,7 @@ Step 2 实现
 蓝图与工程分解阶段的步骤实现
 """
 import logging
+from pathlib import Path
 from typing import Dict, Any
 
 from app.steps.base import BaseStep, StepExecutionError
@@ -1125,6 +1126,43 @@ class Step2_5_PlanFreeze(BaseStep):
                 document=document,
                 commit_message=f"{self.step_id}: Generate Research Plan FROZEN (Gate 2)"
             )
+
+            # ── Phase C: Generate WorkPlan YAML (non-blocking) ──
+            try:
+                from app.services.workplan import WorkPlanLoader
+                from app.config import settings as _settings
+
+                # Load Data/Sim Spec if available
+                data_sim_content = await self.load_context_with_fallback(
+                    step_id="step_2_2",
+                    doc_type=DocumentType.DATA_SIM_SPEC,
+                ) or ""
+
+                workplan = WorkPlanLoader.from_plan_freeze(
+                    program_spec=full_proposal_content,
+                    data_sim_spec=data_sim_content,
+                    eng_decomp=engineering_spec_content,
+                    project_id=self.project.project_id,
+                )
+
+                wp_path = str(
+                    Path(_settings.projects_path)
+                    / self.project.project_id
+                    / "workplan.yaml"
+                )
+                WorkPlanLoader.dump(workplan, wp_path)
+
+                errors = WorkPlanLoader.validate(workplan)
+                if errors:
+                    logger.warning(
+                        "WorkPlan validation warnings: %s", "; ".join(errors)
+                    )
+                else:
+                    logger.info("WorkPlan generated and validated: %s", wp_path)
+            except Exception as wp_err:
+                logger.warning(
+                    "WorkPlan generation failed (non-blocking): %s", wp_err
+                )
 
             logger.info(f"Completed {self.step_name}")
             return document
