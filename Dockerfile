@@ -11,9 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 应用代码与迁移 / 脚本
 COPY app/ app/
 COPY workflows/ workflows/
 COPY sop/ sop/
+COPY alembic.ini .
+COPY alembic/ alembic/
+COPY scripts/ scripts/
 
 # 数据目录由 volume 挂载，不在此创建
 ENV PYTHONUNBUFFERED=1
