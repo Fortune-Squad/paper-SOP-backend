@@ -1,0 +1,121 @@
+### 数据库迁移与初始化说明
+
+#### Alembic 使用方式（新增字段 / 表结构变更）
+
+- **开发环境（本地）**  
+  1. 修改 SQLAlchemy 模型（`app/db/models/*.py` 等文件）。  
+  2. 生成迁移脚本（自动对比当前数据库结构与模型）：
+
+     ```bash
+     cd paper-SOP-backend
+     source .venv/bin/activate  # 如果本地用了虚拟环境
+     alembic revision -m "add xxx field" --autogenerate
+     ```
+
+  3. 应用迁移：
+
+     ```bash
+     alembic upgrade head
+     ```
+
+  4. 启动后端，确认功能正常。
+
+- **生产 / 测试环境（容器内）**  
+  - 由 entrypoint 在容器启动时自动执行：
+
+    ```bash
+    alembic upgrade head
+    ```
+
+  - 如需手动执行，可在服务器上运行：
+
+    ```bash
+    cd ~/app
+    docker compose run --rm backend alembic upgrade head
+    ```
+
+---
+
+#### 管理员种子脚本使用方式
+
+- **本地环境**（已配置 `DATABASE_URL` 指向本地 PostgreSQL）：
+
+  ```bash
+  cd paper-SOP-backend
+  source .venv/bin/activate
+  python scripts/seed_admins.py
+  ```
+
+  - 脚本会尝试创建预置的 4 个管理员账号。
+  - 已存在的用户名会输出 `[SKIP] User 'xxx' already exists`，不会重复创建，可安全多次运行。
+
+- **生产环境（Docker）**
+
+  - 手动执行一次（例如初次上线时）：
+
+    ```bash
+    cd ~/app
+    docker compose run --rm backend python scripts/seed_admins.py
+    ```
+
+  - 自动执行：entrypoint 中会在迁移之后调用一次  
+    `python scripts/seed_admins.py || true`，同样是幂等的，已存在用户会被跳过。
+
+---
+
+#### Backend entrypoint 集成方案说明
+
+- **入口脚本职责**（容器内 `/app/backend-entrypoint.sh`）：
+  1. 切换到应用目录 `/app`。  
+  2. 执行数据库迁移：`alembic upgrade head`。  
+  3. 执行管理员种子脚本：`python scripts/seed_admins.py`（失败不会阻止服务启动，且幂等）。  
+  4. 最后 `exec uvicorn app.main:app --host 0.0.0.0 --port 8000` 启动 FastAPI。
+
+- **docker-compose 集成方式（示意）**：
+
+  ```yaml
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - chroma_data:/app/data/chroma
+      - files_data:/app/data/files
+      - ./backend/backend-entrypoint.sh:/app/backend-entrypoint.sh:ro
+    entrypoint: ["/app/backend-entrypoint.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  ```
+
+- **好处**：
+  - 每次部署 / 重启 backend 容器时，都会自动对齐数据库结构并确保核心管理员账号存在。  
+  - 所有环境（本地 / 测试 / 生产）共用同一套 Alembic 迁移和业务逻辑，避免脚本分叉。
+
+---
+
+#### `backend-entrypoint.sh` 脚本示例
+
+容器内入口脚本完整示例（建议放在 `backend/backend-entrypoint.sh`，并在 compose 中挂载到 `/app/backend-entrypoint.sh`）：
+
+```bash
+#!/usr/bin/env bash
+set -e
+
+echo "[entrypoint] Backend starting (with Alembic migrations)..."
+
+# 切到应用工作目录（Dockerfile 里是 WORKDIR /app）
+cd /app
+
+echo "[entrypoint] Running Alembic migrations..."
+alembic upgrade head
+
+echo "[entrypoint] Seeding admin users..."
+python scripts/seed_admins.py || true
+
+echo "[entrypoint] Starting uvicorn..."
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
