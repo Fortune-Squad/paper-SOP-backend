@@ -13,6 +13,5 @@ config/
 .gitignore
 docs/
 tests/
-scripts/
 *.md
 !README.md
