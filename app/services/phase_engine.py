@@ -31,6 +31,7 @@ from app.services.handoff_packet import (
 from app.services.packet_store import PacketStore
 from app.services.trajectory_store import TrajectoryStore
 from app.services.trajectory_record import TrajectoryRecord
+from app.services.experience_models import PacketContext, inject_context
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,9 @@ class PhaseEngine:
         self.packet_store = packet_store
         self.hil_service = hil_service
         self.project_id = project_id
+        self._packet_ctx = PacketContext(
+            workplan_id=workplan.workplan_id,
+        )
 
     # ── top-level entry ──────────────────────────────────────────
 
@@ -146,6 +150,8 @@ class PhaseEngine:
             phase.phase_id, phase.title, phase.owner, max_iter,
         )
 
+        self._packet_ctx.workphase_id = phase.phase_id
+
         history: List[HandoffPacket] = []
         iteration = 0
 
@@ -154,16 +160,19 @@ class PhaseEngine:
 
             # 1. Owner dispatches task
             dispatch = await self._owner_dispatch(phase, history)
+            inject_context(dispatch, self._packet_ctx)
             self._store_packet(dispatch)
             history.append(dispatch)
 
             # 2. Executor runs
             report = await self._executor_run(phase, dispatch)
+            inject_context(report, self._packet_ctx)
             self._store_packet(report)
             history.append(report)
 
             # 3. Owner reviews
             verdict = await self._owner_review(phase, report)
+            inject_context(verdict, self._packet_ctx)
             self._store_packet(verdict)
             history.append(verdict)
 

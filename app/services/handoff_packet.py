@@ -60,6 +60,13 @@ class ReasoningBlock:
     discoveries: List[str] = field(default_factory=list)
     what_i_tried_but_failed: List[str] = field(default_factory=list)
 
+    # ── DevSpec v0.2: experience & pivot fields ──────────────────────
+    failure_classification: Optional[str] = None  # FailureClassification value
+    validated_checkpoints: List[Any] = field(default_factory=list)  # List[ValidatedCheckpoint]
+    ruled_out_options: List[Any] = field(default_factory=list)  # List[RuledOutOption]
+    structural_evidence_refs: List[str] = field(default_factory=list)
+    pivot_suggestion: Optional[str] = None  # NONE | REPLAN | PIVOT_MODEL | PIVOT_TASK
+
 
 @dataclass
 class DecisionBlock:
@@ -131,3 +138,8 @@ class HandoffPacket:
     artifacts: Optional[ArtifactBlock] = None
     task: Optional[TaskBlock] = None
     convergence: Optional[ConvergenceConfig] = None
+
+    # ── DevSpec v0.2: experience & pivot fields ──────────────────────
+    workphase_id: str = ""
+    risk_flags: List[str] = field(default_factory=list)
+    experience_bundle: Optional[Any] = None  # ExperienceBundle from experience_models

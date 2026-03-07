@@ -69,6 +69,12 @@ class WorkPlan:
     warning_gates: List[str] = field(default_factory=list)
     phases: List[Phase] = field(default_factory=list)
 
+    # ── DevSpec v0.2: lineage fields ─────────────────────────────────
+    predecessor_workplan_id: Optional[str] = None
+    pivot_reason: Optional[str] = None
+    pivot_classification: Optional[str] = None  # FailureClassification value
+    pivot_evidence_refs: List[str] = field(default_factory=list)
+
 
 # ── loader / validator / dumper ─────────────────────────────────────
 
@@ -112,6 +118,11 @@ class WorkPlanLoader:
             agents=raw.get("agents", []),
             warning_gates=raw.get("warning_gates", []),
             phases=phases,
+            # DevSpec v0.2: lineage
+            predecessor_workplan_id=raw.get("predecessor_workplan_id"),
+            pivot_reason=raw.get("pivot_reason"),
+            pivot_classification=raw.get("pivot_classification"),
+            pivot_evidence_refs=raw.get("pivot_evidence_refs", []),
         )
 
     @staticmethod

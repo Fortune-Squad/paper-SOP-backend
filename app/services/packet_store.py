@@ -89,6 +89,51 @@ class PacketStore:
                 return self._dict_to_packet(r)
         return None
 
+    # ── DevSpec v0.2 queries ───────────────────────────────────────
+
+    def query_by_workplan(
+        self,
+        workplan_id: str,
+        *,
+        packet_types: Optional[List[str]] = None,
+    ) -> List[HandoffPacket]:
+        """Return all packets belonging to a specific workplan."""
+        records = self._load_all()
+        results: List[HandoffPacket] = []
+        for r in records:
+            if r.get("workplan_id") != workplan_id:
+                continue
+            if packet_types and r.get("packet_type") not in packet_types:
+                continue
+            results.append(self._dict_to_packet(r))
+        return results
+
+    def query_by_workphase(
+        self,
+        workphase_id: str,
+        *,
+        packet_types: Optional[List[str]] = None,
+    ) -> List[HandoffPacket]:
+        """Return all packets belonging to a specific workphase."""
+        records = self._load_all()
+        results: List[HandoffPacket] = []
+        for r in records:
+            if r.get("workphase_id") != workphase_id:
+                continue
+            if packet_types and r.get("packet_type") not in packet_types:
+                continue
+            results.append(self._dict_to_packet(r))
+        return results
+
+    def query_lineage_chain(self, workplan_id: str) -> List[str]:
+        """Return ordered list of workplan_ids in the lineage chain.
+
+        TODO: Implement chain traversal once WorkPlan gains
+        predecessor_workplan_id (DevSpec v0.2, Step 5).
+        Currently returns [workplan_id] only.
+        """
+        return [workplan_id]
+
     def export_chain(self, thread_id: str) -> List[Dict[str, Any]]:
         """Export a full conversation chain as dicts, ordered by timestamp."""
         records = self._load_all()
@@ -139,6 +184,12 @@ class PacketStore:
         ph = packet.phase_id or "unknown"
         by_phase[ph] = by_phase.get(ph, 0) + 1
 
+        # DevSpec v0.2: workplan_id dimension (skip empty/None)
+        wp = packet.workplan_id
+        if wp:
+            by_wp = index.setdefault("by_workplan", {})
+            by_wp[wp] = by_wp.get(wp, 0) + 1
+
         with open(self.index_path, "w", encoding="utf-8") as f:
             json.dump(index, f, ensure_ascii=False, indent=2)
 
@@ -179,4 +230,8 @@ class PacketStore:
             artifacts=artifacts,
             task=task,
             convergence=convergence,
+            # DevSpec v0.2 fields
+            workphase_id=d.get("workphase_id", ""),
+            risk_flags=d.get("risk_flags", []),
+            experience_bundle=d.get("experience_bundle"),
         )
