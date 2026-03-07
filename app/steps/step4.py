@@ -82,6 +82,16 @@ def _advance_delivery_state(project: Project, current: DeliveryState) -> Deliver
     return next_state
 
 
+def _resolve_delivery_profile(project: Project) -> str:
+    """从 state.json 读取 delivery_profile（权威来源），降级到 project model"""
+    try:
+        state_store = StateStore()
+        exec_state = state_store.load(project.project_id)
+        return exec_state.delivery_state.profile.value
+    except Exception:
+        return project.delivery_profile or "external_assembly_kit"
+
+
 def _check_delivery_state(project: Project, step_id: str) -> None:
     """检查 DeliveryState 是否允许执行"""
     expected = STEP_EXPECTED_STATE.get(step_id)
@@ -93,6 +103,111 @@ def _check_delivery_state(project: Project, step_id: str) -> None:
             f"DeliveryState mismatch for {step_id}: expected={expected.value}, "
             f"current={current.value}. Proceeding anyway."
         )
+
+
+def _export_handoff_audit(project_path: Path) -> None:
+    """Export handoff audit + convergence stats for delivery packaging.
+
+    Reads ``handoff/packets.jsonl`` — if it exists — and writes:
+    - ``delivery/handoff_audit.json``   (full packet chain)
+    - ``delivery/convergence_report.json`` (aggregate statistics)
+
+    Skipped silently when no packets file is present (legacy projects).
+    """
+    import json as _json
+    from collections import Counter
+
+    packets_path = project_path / "handoff" / "packets.jsonl"
+    if not packets_path.exists():
+        logger.info("No handoff packets found — skipping audit export")
+        return
+
+    # Load all packets
+    all_packets: list = []
+    with open(packets_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                all_packets.append(_json.loads(line))
+            except _json.JSONDecodeError:
+                continue
+
+    if not all_packets:
+        logger.info("Packets file empty — skipping audit export")
+        return
+
+    delivery_dir = project_path / "delivery"
+    delivery_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── D1: handoff_audit.json ───────────────────────────────────
+    audit_path = delivery_dir / "handoff_audit.json"
+    with open(audit_path, "w", encoding="utf-8") as f:
+        _json.dump(
+            {"schema": "m2m-tp/0.2", "total": len(all_packets), "packets": all_packets},
+            f, ensure_ascii=False, indent=2, default=str,
+        )
+    logger.info("Handoff audit exported: %d packets → %s", len(all_packets), audit_path)
+
+    # ── D2: convergence_report.json ──────────────────────────────
+    phase_ids = set()
+    advanced = set()
+    aborted = set()
+    escalated = set()
+    total_iterations = 0
+    error_types: Counter = Counter()
+    warning_gates_triggered: list = []
+
+    for pkt in all_packets:
+        pid = pkt.get("phase_id", "")
+        if pid:
+            phase_ids.add(pid)
+
+        ptype = pkt.get("packet_type", "")
+        decisions = pkt.get("decisions") or {}
+        ra_action = decisions.get("ra_action", "")
+
+        if ra_action == "ADVANCE":
+            advanced.add(pid)
+        elif ra_action == "ABORT":
+            aborted.add(pid)
+        elif ra_action == "ESCALATE":
+            escalated.add(pid)
+
+        if ptype == "result_report":
+            total_iterations += 1
+
+        # Collect error types from reasoning.what_i_tried_but_failed
+        reasoning = pkt.get("reasoning") or {}
+        for failure in reasoning.get("what_i_tried_but_failed", []):
+            if isinstance(failure, str) and failure:
+                error_types[failure[:80]] += 1
+
+        # Warning gates from reasoning.warnings
+        for w in reasoning.get("warnings", []):
+            if isinstance(w, str) and w:
+                warning_gates_triggered.append(w)
+
+    n_phases = len(phase_ids) or 1
+    stats = {
+        "total_phases": len(phase_ids),
+        "phases_advanced": len(advanced),
+        "phases_aborted": len(aborted),
+        "phases_escalated": len(escalated),
+        "total_iterations": total_iterations,
+        "avg_iterations_per_phase": round(total_iterations / n_phases, 2),
+        "top_error_types": [
+            {"error": err, "count": cnt}
+            for err, cnt in error_types.most_common(10)
+        ],
+        "warning_gates_triggered": sorted(set(warning_gates_triggered)),
+    }
+
+    report_path = delivery_dir / "convergence_report.json"
+    with open(report_path, "w", encoding="utf-8") as f:
+        _json.dump(stats, f, ensure_ascii=False, indent=2, default=str)
+    logger.info("Convergence report exported → %s", report_path)
 
 
 class Step4_Collect(BaseStep):
@@ -135,7 +250,7 @@ class Step4_Collect(BaseStep):
 
             prompt = render_collect_prompt(frozen_summary, wp_registry)
 
-            response = await self.claude_client.chat(
+            response = await self._dispatch_ai("structured_extract").chat(
                 prompt,
                 system_prompt="You are a Research Delivery Manager collecting frozen artifacts.",
             )
@@ -273,7 +388,7 @@ For each figure and table, provide polish suggestions:
 Output a structured list of polish items per figure/table.
 """
 
-                response = await self.claude_client.chat(
+                response = await self._dispatch_ai("packaging").chat(
                     prompt,
                     system_prompt="You are a scientific figure quality specialist.",
                 )
@@ -357,10 +472,8 @@ class Step4_Assembly(BaseStep):
                 step_id="step_3_exec", doc_type=DocumentType.EXECUTION_STATE
             ) or ""
 
-            # §4.3 D2: delivery_profile 分支
-            delivery_profile = "external_assembly_kit"  # default
-            if "internal_draft" in manifest.lower():
-                delivery_profile = "internal_draft"
+            # §4.3 D2: delivery_profile 分支（从 state.json 权威读取）
+            delivery_profile = _resolve_delivery_profile(self.project)
 
             if delivery_profile == "internal_draft":
                 prompt = render_paper_draft_prompt(
@@ -377,7 +490,7 @@ class Step4_Assembly(BaseStep):
                 )
                 doc_type = DocumentType.ASSEMBLY_KIT_OUTLINE
 
-            response = await self.claude_client.chat(
+            response = await self._dispatch_ai("packaging").chat(
                 prompt,
                 system_prompt="You are a Research Paper Assembly Specialist.",
             )
@@ -444,7 +557,7 @@ class Step4_CitationQA(BaseStep):
 
             prompt = render_citation_qa_prompt(assembly, refs)
 
-            response = await self.claude_client.chat(
+            response = await self._dispatch_ai("citation_qa").chat(
                 prompt,
                 system_prompt="You are a Citation Quality Assurance Specialist.",
             )
@@ -573,7 +686,7 @@ class Step4_ReproCheck(BaseStep):
 
             prompt = render_repro_check_prompt(manifest_summary, verification_summary)
 
-            response = await self.claude_client.chat(
+            response = await self._dispatch_ai("review").chat(
                 prompt,
                 system_prompt="You are a Reproducibility Verification Specialist.",
             )
@@ -720,6 +833,18 @@ class Step4_Package(BaseStep):
             if not assembly_doc:
                 gate_failures.append("Assembly Kit not found")
 
+            # Check 4: D8 Forbidden output — external_assembly_kit 禁止 draft.tex/draft.md
+            delivery_profile = _resolve_delivery_profile(self.project)
+            if delivery_profile == "external_assembly_kit":
+                paper_dir = project_path / "delivery" / "paper"
+                if paper_dir.exists():
+                    forbidden = [f.name for f in paper_dir.iterdir()
+                                 if f.name in ("draft.tex", "draft.md")]
+                    if forbidden:
+                        gate_failures.append(
+                            f"D8: external_assembly_kit 禁止输出 {', '.join(forbidden)}"
+                        )
+
             if gate_failures:
                 raise StepExecutionError(f"Pre-package gate FAIL: {'; '.join(gate_failures)}")
 
@@ -737,7 +862,7 @@ class Step4_Package(BaseStep):
 
             prompt = render_package_prompt(manifest, assembly, citation_report)
 
-            response = await self.claude_client.chat(
+            response = await self._dispatch_ai("packaging").chat(
                 prompt,
                 system_prompt="You are a Research Delivery Packager.",
             )
@@ -761,6 +886,12 @@ class Step4_Package(BaseStep):
             await self.save_and_commit(document, "step_4_package: Delivery package created")
             await self.save_to_artifact_store(response, DocumentType.DELIVERY_MANIFEST, ArtifactStatus.FROZEN)
             _advance_delivery_state(self.project, DeliveryState.REPRO_CHECK)
+
+            # ── Phase D: Handoff audit + convergence stats (non-blocking) ──
+            try:
+                _export_handoff_audit(project_path)
+            except Exception as ha_err:
+                logger.warning(f"Handoff audit export failed (non-blocking): {ha_err}")
 
             # v7.1 S3-2: Export error chain trace bundle
             try:

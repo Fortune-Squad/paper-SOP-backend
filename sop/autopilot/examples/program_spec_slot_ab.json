@@ -1,0 +1,25 @@
+{
+  "program_id": "slot-ab-submit-example",
+  "goal": "Generate Slot-A and Slot-B submit-only bundles.",
+  "constraints": [
+    "slot_a",
+    "slot_b",
+    "submit_only"
+  ],
+  "max_candidates": 2,
+  "execution_types": [
+    "slot_a",
+    "slot_b"
+  ],
+  "executor_map": {
+    "slot_a": {
+      "kernel": "subprocess",
+      "cmd_file": "sop/autopilot/examples/cmd_slot_a_submit.json"
+    },
+    "slot_b": {
+      "kernel": "subprocess",
+      "cmd_file": "sop/autopilot/examples/cmd_slot_b_manual_bundle.json"
+    }
+  }
+}
+
