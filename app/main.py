@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Paper SOP Automation API",
     description="自动化研究论文 SOP 系统 API (v4.0) - 支持用户认证",
-    version=APP_VERSION
+    version=APP_VERSION,
+    redirect_slashes=False,
 )
 
 # 配置 CORS（前后端不同域时由 CORS_ORIGINS 环境变量指定前端域名）

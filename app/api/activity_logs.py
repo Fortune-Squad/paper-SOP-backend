@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/activity-logs", tags=["Activity Logs"])
 
 
+@router.get("")
 @router.get("/")
 async def get_activity_logs(
     user_id: Optional[int] = Query(None, description="Filter by user ID"),
