@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/users", tags=["User Management"])
 
 
+@router.get("")
 @router.get("/")
 async def list_users(
     skip: int = Query(0, ge=0, description="Number of records to skip"),

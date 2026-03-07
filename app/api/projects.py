@@ -528,6 +528,7 @@ async def confirm_bootloader(
         )
 
 
+@router.get("")
 @router.get("/")
 async def list_projects(
     current_user: DBUser = Depends(get_current_active_user)  # v6.1: 需要认证
